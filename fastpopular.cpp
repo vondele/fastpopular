@@ -17,8 +17,8 @@
 #include <vector>
 
 #include "external/chess.hpp"
-#include "external/threadpool.hpp"
 #include "external/parallel_hashmap/phmap.h"
+#include "external/threadpool.hpp"
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -104,7 +104,7 @@ void ana_game(map_t &pos_map, const std::optional<Game> &game,
 
     if (!do_filter || filter_side == board.sideToMove())
       if (move.comment != "book") {
-        int count = ++pos_map[board.getFen()] ;
+        int count = ++pos_map[board.getFen()];
         if (stop_early && count == 1)
           break;
         retained_plies++;
@@ -460,7 +460,8 @@ int main(int argc, char const *argv[]) {
 
   const auto t0 = std::chrono::high_resolution_clock::now();
 
-  process(files_pgn, pos_map, regex_engine, meta_map, fix_fens, max_plies, stop_early);
+  process(files_pgn, pos_map, regex_engine, meta_map, fix_fens, max_plies,
+          stop_early);
 
   const auto t1 = std::chrono::high_resolution_clock::now();
 
