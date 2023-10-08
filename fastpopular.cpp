@@ -18,6 +18,7 @@
 
 #include "external/chess.hpp"
 #include "external/threadpool.hpp"
+#include "external/parallel_hashmap/phmap.h"
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -25,7 +26,7 @@ using json = nlohmann::json;
 using namespace chess;
 
 // unordered map to count fens
-using map_t = std::unordered_map<std::string, int>;
+using map_t = phmap::parallel_flat_hash_map<std::string, int>;
 
 // map to collect metadata for tests
 using map_meta = std::unordered_map<std::string, TestMetaData>;
@@ -45,7 +46,7 @@ static constexpr int map_size = 1200000;
 /// @param move_counter
 void ana_game(map_t &pos_map, const std::optional<Game> &game,
               const std::string &regex_engine, const std::string &move_counter,
-              const int max_plies) {
+              const int max_plies, const bool stop_early) {
   if (game.value().headers().find("Result") == game.value().headers().end()) {
     return;
   }
@@ -103,7 +104,9 @@ void ana_game(map_t &pos_map, const std::optional<Game> &game,
 
     if (!do_filter || filter_side == board.sideToMove())
       if (move.comment != "book") {
-        pos_map[board.getFen()]++;
+        int count = ++pos_map[board.getFen()] ;
+        if (stop_early && count == 1)
+          break;
         retained_plies++;
       }
   }
@@ -125,8 +128,7 @@ void gzip_uncompress(std::string &out,
 
 void ana_files(map_t &map, const std::vector<std::string> &files,
                const std::string &regex_engine, const map_meta &meta_map,
-               bool fix_fens, const int max_plies) {
-  map.reserve(map_size);
+               bool fix_fens, const int max_plies, const bool stop_early) {
 
   for (const auto &file : files) {
     std::string move_counter;
@@ -168,7 +170,7 @@ void ana_files(map_t &map, const std::vector<std::string> &files,
           break;
         }
 
-        ana_game(map, game, regex_engine, move_counter, max_plies);
+        ana_game(map, game, regex_engine, move_counter, max_plies, stop_early);
       }
     };
 
@@ -276,7 +278,7 @@ void filter_files_sprt(std::vector<std::string> &file_list,
 
 void process(const std::vector<std::string> &files_pgn, map_t &pos_map,
              const std::string &regex_engine, const map_meta &meta_map,
-             bool fix_fens, const int max_plies) {
+             bool fix_fens, const int max_plies, const bool stop_early) {
   // Create more chunks than threads to prevent threads from idling.
   int target_chunks = 4 * std::max(1, int(std::thread::hardware_concurrency()));
 
@@ -298,10 +300,10 @@ void process(const std::vector<std::string> &files_pgn, map_t &pos_map,
   for (const auto &files : files_chunked) {
 
     pool.enqueue([&files, &regex_engine, &meta_map, &fix_fens, &map_mutex,
-                  &pos_map, &files_chunked, &max_plies]() {
+                  &pos_map, &files_chunked, &max_plies, &stop_early]() {
       map_t map;
       analysis::ana_files(map, files, regex_engine, meta_map, fix_fens,
-                          max_plies);
+                          max_plies, stop_early);
 
       total_chunks++;
 
@@ -335,7 +337,7 @@ void save(const map_t &pos_map, const std::string &filename,
   for (const auto &pair : pos_map) {
     if (pair.second >= min_count) {
       out_file << pair.first << " ; c0 " << pair.second << std::endl;
-      total += pair.second;
+      total++;
     }
   }
   out_file.close();
@@ -360,6 +362,7 @@ void print_usage(char const *program_name) {
     ss << "  --SPRTonly            Analyse only pgns from SPRT tests" << "\n";
     ss << "  --fixFEN              Patch move counters lost by cutechess-cli" << "\n";
     ss << "  --maxPlies <N>        Maximum number of plies to consider from the game, excluding book moves (default 20)" << "\n";
+    ss << "  --stopEarly           Stop analysing the game as soon as a new position is reached (default false) for the analysing thread." << "\n";
     ss << "  --minCount <N>        Minimum count of the positin before being written to file (default 1)" << "\n";
     ss << "  -o <path>             Path to output epd file (default: popular.epd)" << "\n";
     ss << "  --help                Print this help message" << "\n";
@@ -437,6 +440,8 @@ int main(int argc, char const *argv[]) {
     max_plies = std::stoi(*std::next(pos));
   }
 
+  bool stop_early = find_argument(args, pos, "--stopEarly", true);
+
   if (find_argument(args, pos, "--minCount")) {
     min_count = std::stoi(*std::next(pos));
   }
@@ -452,11 +457,10 @@ int main(int argc, char const *argv[]) {
   }
 
   map_t pos_map;
-  pos_map.reserve(analysis::map_size);
 
   const auto t0 = std::chrono::high_resolution_clock::now();
 
-  process(files_pgn, pos_map, regex_engine, meta_map, fix_fens, max_plies);
+  process(files_pgn, pos_map, regex_engine, meta_map, fix_fens, max_plies, stop_early);
 
   const auto t1 = std::chrono::high_resolution_clock::now();
 
