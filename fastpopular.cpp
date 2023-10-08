@@ -26,7 +26,7 @@ using json = nlohmann::json;
 using namespace chess;
 
 // unordered map to count fens
-using map_t = phmap::parallel_flat_hash_map<std::string, int>;
+using map_t = phmap::parallel_flat_hash_map<std::string, std::uint64_t>;
 
 // map to collect metadata for tests
 using map_meta = std::unordered_map<std::string, TestMetaData>;
@@ -330,7 +330,7 @@ void process(const std::vector<std::string> &files_pgn, map_t &pos_map,
 /// @param pos_map
 /// @param json_filename
 void save(const map_t &pos_map, const std::string &filename,
-          const int min_count) {
+          const unsigned int min_count) {
   std::uint64_t total = 0;
 
   std::ofstream out_file(filename);
@@ -381,7 +381,7 @@ int main(int argc, char const *argv[]) {
   std::vector<std::string> files_pgn;
   std::string regex_engine, regex_book, filename = "popular.epd";
   int max_plies = 20;
-  int min_count = 1;
+  unsigned int min_count = 1;
 
   std::vector<std::string>::const_iterator pos;
 
