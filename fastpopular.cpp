@@ -147,14 +147,30 @@ void ana_files(map_t &map, const std::vector<std::string> &files,
     }
 
     const auto pgn_iterator = [&](std::istream &iss) {
+      int game_index = 0;
       while (true) {
-        auto game = pgn::readGame(iss);
+        try {
+          auto game = pgn::readGame(iss);
 
-        if (!game.has_value()) {
-          break;
+          if (!game.has_value()) {
+            break;
+          }
+
+          ana_game(map, game, regex_engine, move_counter, max_plies,
+                   stop_early);
+        } catch (const std::exception &e) {
+          std::cout << "Error when parsing: " << file << " at game index "
+                    << game_index << std::endl;
+          std::cerr << e.what() << '\n';
+          std::string line;
+          while (!utils::safeGetline(iss, line).eof()) {
+            // We read until we reached the end of the current pgn, which is
+            // signaled by an empty line.
+            if (line.empty())
+              break;
+          }
         }
-
-        ana_game(map, game, regex_engine, move_counter, max_plies, stop_early);
+        ++game_index;
       }
     };
 
