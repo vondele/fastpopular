@@ -210,7 +210,7 @@ class GzippedFileBuf : public std::streambuf {
 
    private:
     gzFile file_;
-    static constexpr int BufferSize = 1024;
+    static constexpr int BufferSize = 1024 * 1024;
     char buffer_[BufferSize];
 };
 

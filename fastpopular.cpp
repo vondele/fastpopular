@@ -24,7 +24,12 @@ using json = nlohmann::json;
 using namespace chess;
 
 // unordered map to count fens
-using map_t = phmap::parallel_flat_hash_map<std::string, std::uint64_t>;
+using map_t = phmap::parallel_flat_hash_map<
+    std::string, std::uint64_t, std::hash<std::string>,
+    std::equal_to<std::string>,
+    std::allocator<std::pair<const std::string, std::uint64_t>>, 8, std::mutex>;
+
+map_t pos_map;
 
 // map to collect metadata for tests
 using map_meta = std::unordered_map<std::string, TestMetaData>;
@@ -42,7 +47,7 @@ static constexpr int map_size = 1200000;
 /// @param game
 /// @param regex_engine
 /// @param move_counter
-void ana_game(map_t &pos_map, const std::optional<Game> &game,
+void ana_game(const std::optional<Game> &game,
               const std::string &regex_engine, const std::string &move_counter,
               const int max_plies, const bool stop_early) {
   if (game.value().headers().find("Result") == game.value().headers().end()) {
@@ -102,15 +107,18 @@ void ana_game(map_t &pos_map, const std::optional<Game> &game,
 
     if (!do_filter || filter_side == board.sideToMove())
       if (move.comment != "book") {
-        int count = ++pos_map[board.getFen()];
-        if (stop_early && count == 1)
-          break;
+        std::string fen = board.getFen();
+        bool is_new_entry = pos_map.lazy_emplace_l(std::move(fen),
+                                 [&](map_t::value_type& p) { ++p.second; },
+                                 [&](const map_t::constructor& ctor) { ctor(std::move(fen), 1); });
+        if (stop_early && is_new_entry)
+            break;
         retained_plies++;
       }
   }
 }
 
-void ana_files(map_t &map, const std::vector<std::string> &files,
+void ana_files(const std::vector<std::string> &files,
                const std::string &regex_engine, const map_meta &meta_map,
                bool fix_fens, const int max_plies, const bool stop_early) {
 
@@ -156,7 +164,7 @@ void ana_files(map_t &map, const std::vector<std::string> &files,
             break;
           }
 
-          ana_game(map, game, regex_engine, move_counter, max_plies,
+          ana_game(game, regex_engine, move_counter, max_plies,
                    stop_early);
         } catch (const std::exception &e) {
           std::cout << "Error when parsing: " << file << " at game index "
@@ -273,7 +281,7 @@ void filter_files_sprt(std::vector<std::string> &file_list,
                   file_list.end());
 }
 
-void process(const std::vector<std::string> &files_pgn, map_t &pos_map,
+void process(const std::vector<std::string> &files_pgn,
              const std::string &regex_engine, const map_meta &meta_map,
              bool fix_fens, const int max_plies, const bool stop_early,
              int concurrency) {
@@ -285,8 +293,8 @@ void process(const std::vector<std::string> &files_pgn, map_t &pos_map,
   std::cout << "Found " << files_pgn.size() << " .pgn(.gz) files, creating "
             << files_chunked.size() << " chunks for processing." << std::endl;
 
-  // Mutex for pos_map access
-  std::mutex map_mutex;
+  // Mutex for progress output
+  std::mutex progress_output;
 
   // Create a thread pool
   ThreadPool pool(concurrency);
@@ -297,21 +305,16 @@ void process(const std::vector<std::string> &files_pgn, map_t &pos_map,
 
   for (const auto &files : files_chunked) {
 
-    pool.enqueue([&files, &regex_engine, &meta_map, &fix_fens, &map_mutex,
-                  &pos_map, &files_chunked, &max_plies, &stop_early]() {
-      map_t map;
-      analysis::ana_files(map, files, regex_engine, meta_map, fix_fens,
+    pool.enqueue([&files, &regex_engine, &meta_map, &fix_fens, &progress_output,
+                  &files_chunked, &max_plies, &stop_early]() {
+      analysis::ana_files(files, regex_engine, meta_map, fix_fens,
                           max_plies, stop_early);
 
       total_chunks++;
 
       // Limit the scope of the lock
       {
-        const std::lock_guard<std::mutex> lock(map_mutex);
-
-        for (const auto &pair : map) {
-          pos_map[pair.first] += pair.second;
-        }
+        const std::lock_guard<std::mutex> lock(progress_output);
 
         // Print progress
         std::cout << "\rProgress: " << total_chunks << "/"
@@ -327,7 +330,7 @@ void process(const std::vector<std::string> &files_pgn, map_t &pos_map,
 /// @brief Save the position map to a json file.
 /// @param pos_map
 /// @param json_filename
-void save(const map_t &pos_map, const std::string &filename,
+void save(const std::string &filename,
           const unsigned int min_count) {
   std::uint64_t total = 0;
 
@@ -460,11 +463,9 @@ int main(int argc, char const *argv[]) {
     filename = *std::next(pos);
   }
 
-  map_t pos_map;
-
   const auto t0 = std::chrono::high_resolution_clock::now();
 
-  process(files_pgn, pos_map, regex_engine, meta_map, fix_fens, max_plies,
+  process(files_pgn, regex_engine, meta_map, fix_fens, max_plies,
           stop_early, concurrency);
 
   const auto t1 = std::chrono::high_resolution_clock::now();
@@ -473,7 +474,7 @@ int main(int argc, char const *argv[]) {
             << std::chrono::duration_cast<std::chrono::seconds>(t1 - t0).count()
             << "s" << std::endl;
 
-  save(pos_map, filename, min_count);
+  save(filename, min_count);
 
   return 0;
 }
