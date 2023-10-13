@@ -42,82 +42,161 @@ namespace analysis {
 /// @brief Magic value for fishtest pgns, ~1.2 million keys
 static constexpr int map_size = 1200000;
 
-/// @brief Analyze a single game and update the position map, apply filter if
-/// present
-/// @param pos_map
-/// @param game
-/// @param regex_engine
-/// @param move_counter
-void ana_game(const std::optional<Game> &game,
-              const std::string &regex_engine, const std::string &move_counter,
-              const int max_plies, const bool stop_early) {
-  if (game.value().headers().find("Result") == game.value().headers().end()) {
-    return;
-  }
+/// @brief Analyze a file with pgn games and update the position map, apply filter if present
+class Analyze : public pgn::Visitor {
+   public:
+    Analyze(const std::string &regex_engine, const std::string &move_counter, const bool stop_early, const int max_plies)
+        : regex_engine(regex_engine), move_counter(move_counter), stop_early(stop_early), max_plies(max_plies) {}
 
-  bool do_filter = !regex_engine.empty();
-  Color filter_side = Color::NONE;
-  if (do_filter) {
-    if (game.value().headers().find("White") == game.value().headers().end() ||
-        game.value().headers().find("Black") == game.value().headers().end()) {
-      return;
+    virtual ~Analyze() {}
+
+    void startPgn() override {}
+
+    void startMoves() override {
+        do_filter = !regex_engine.empty();
+
+        if (do_filter) {
+            if (white.empty() || black.empty()) {
+                return;
+            }
+
+            std::regex regex(regex_engine);
+
+            if (std::regex_match(white, regex)) {
+                filter_side = Color::WHITE;
+            }
+
+            if (std::regex_match(black, regex)) {
+                if (filter_side == Color::NONE) {
+                    filter_side = Color::BLACK;
+                } else {
+                    do_filter = false;
+                }
+            }
+        }
     }
 
-    std::regex regex(regex_engine);
+    void header(std::string_view key, std::string_view value) override {
+        if (key == "FEN") {
+            std::regex p("0 1$");
 
-    if (std::regex_match(game.value().headers().at("White"), regex)) {
-      filter_side = Color::WHITE;
+            // revert change by cutechess-cli of move counters in .epd books to "0 1"
+            if (!move_counter.empty() && std::regex_search(value.data(), p)) {
+                board.setFen(std::regex_replace(value.data(), p, "0 " + move_counter));
+            } else {
+                board.setFen(value);
+            }
+        }
+
+        if (key == "Variant" && value == "fischerandom") {
+            board.set960(true);
+        }
+
+        if (key == "Result") {
+            hasResult  = true;
+            goodResult = true;
+
+            if (value == "1-0") {
+                resultkey.white = Result::WIN;
+                resultkey.black = Result::LOSS;
+            } else if (value == "0-1") {
+                resultkey.white = Result::LOSS;
+                resultkey.black = Result::WIN;
+            } else if (value == "1/2-1/2") {
+                resultkey.white = Result::DRAW;
+                resultkey.black = Result::DRAW;
+            } else {
+                goodResult = false;
+            }
+        }
+
+        if (key == "Termination") {
+            if (value == "time forfeit" || value == "abandoned") {
+                goodTermination = false;
+            }
+        }
+
+        if (key == "White") {
+            white = value;
+        }
+
+        if (key == "Black") {
+            black = value;
+        }
+
+        skip = !(hasResult && goodTermination && goodResult);
+        skip = !hasResult; /* TODO */
     }
 
-    if (std::regex_match(game.value().headers().at("Black"), regex)) {
-      if (filter_side == Color::NONE) {
-        filter_side = Color::BLACK;
-      } else {
-        do_filter = false;
-      }
+    void move(std::string_view move, std::string_view comment) override {
+        if (skip) {
+            return;
+        }
+
+        if (retained_plies >= max_plies)
+            return;
+
+        Move m;
+
+        m = uci::parseSanInternal(board, move.data(), moves);
+
+        board.makeMove(m);
+
+        if (!do_filter || filter_side == board.sideToMove())
+          if (comment != "book") {
+            std::string fen = board.getFen();
+            bool is_new_entry = pos_map.lazy_emplace_l(std::move(fen),
+                                     [&](map_t::value_type& p) { ++p.second; },
+                                     [&](const map_t::constructor& ctor) { ctor(std::move(fen), 1); });
+            if (stop_early && is_new_entry) {
+                skip = true;
+                return;
+            }
+            retained_plies++;
+          }
     }
-  }
 
-  Board board = Board();
+    void endPgn() override {
+        board.set960(false);
+        board.setFen(STARTPOS);
 
-  if (game.value().headers().find("FEN") != game.value().headers().end()) {
-    std::string fen = game.value().headers().at("FEN");
+        goodTermination = true;
+        hasResult       = false;
+        goodResult      = false;
 
-    if (!move_counter.empty()) {
-      // revert change by cutechess-cli of move counters in .epd books to "0 1"
-      std::regex p("0 1$");
-      if (std::regex_search(fen, p)) {
-        fen = std::regex_replace(fen, p, "0 " + move_counter);
-      }
+        retained_plies  = 0;
+
+        filter_side = Color::NONE;
+
+        white.clear();
+        black.clear();
     }
 
-    board.setFen(fen);
-  }
+   private:
+    const std::string &regex_engine;
+    const std::string &move_counter;
+    const bool stop_early;
+    const int max_plies;
 
-  if (game.value().headers().find("Variant") != game.value().headers().end() &&
-      game.value().headers().at("Variant") == "fischerandom") {
-    board.set960(true);
-  }
+    Board board;
+    Movelist moves;
 
-  int retained_plies = 0;
-  for (const auto &move : game.value().moves()) {
-    if (retained_plies >= max_plies) {
-      break;
-    }
-    board.makeMove(move.move);
+    bool skip = false;
 
-    if (!do_filter || filter_side == board.sideToMove())
-      if (move.comment != "book") {
-        std::string fen = board.getFen();
-        bool is_new_entry = pos_map.lazy_emplace_l(std::move(fen),
-                                 [&](map_t::value_type& p) { ++p.second; },
-                                 [&](const map_t::constructor& ctor) { ctor(std::move(fen), 1); });
-        if (stop_early && is_new_entry)
-            break;
-        retained_plies++;
-      }
-  }
-}
+    bool goodTermination = true;
+    bool hasResult       = false;
+    bool goodResult      = false;
+
+    bool do_filter    = false;
+    Color filter_side = Color::NONE;
+
+    std::string white;
+    std::string black;
+
+    ResultKey resultkey;
+
+    int retained_plies = 0;
+};
 
 void ana_files(const std::vector<std::string> &files,
                const std::string &regex_engine, const map_meta &meta_map,
@@ -156,31 +235,16 @@ void ana_files(const std::vector<std::string> &files,
     }
 
     const auto pgn_iterator = [&](std::istream &iss) {
-      int game_index = 0;
-      while (true) {
+        auto vis = std::make_unique<Analyze>(regex_engine, move_counter, stop_early, max_plies);
+
+        pgn::StreamParser parser(iss);
+
         try {
-          auto game = pgn::readGame(iss);
-
-          if (!game.has_value()) {
-            break;
-          }
-
-          ana_game(game, regex_engine, move_counter, max_plies,
-                   stop_early);
+            parser.readGames(*vis);
         } catch (const std::exception &e) {
-          std::cout << "Error when parsing: " << file << " at game index "
-                    << game_index << std::endl;
-          std::cerr << e.what() << '\n';
-          std::string line;
-          while (!utils::safeGetline(iss, line).eof()) {
-            // We read until we reached the end of the current pgn, which is
-            // signaled by an empty line.
-            if (line.empty())
-              break;
-          }
+            std::cout << "Error when parsing: " << file << std::endl;
+            std::cerr << e.what() << '\n';
         }
-        ++game_index;
-      }
     };
 
     if (file.size() >= 3 && file.substr(file.size() - 3) == ".gz") {
