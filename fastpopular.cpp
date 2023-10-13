@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "external/chess.hpp"
+#include "external/gzip/gzstream.h"
 #include "external/parallel_hashmap/phmap.h"
 #include "external/threadpool.hpp"
 
@@ -183,7 +184,7 @@ void ana_files(const std::vector<std::string> &files,
     };
 
     if (file.size() >= 3 && file.substr(file.size() - 3) == ".gz") {
-      GzippedFileIStream input(file.c_str());
+      igzstream input(file.c_str());
       pgn_iterator(input);
     } else {
       std::ifstream pgn_stream(file);
