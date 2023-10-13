@@ -128,7 +128,7 @@ public:
 
     if (!do_filter || filter_side == board.sideToMove())
       if (comment != "book") {
-        std::string fen = board.getFen();
+        std::string fen = board.getFen(false);
         bool is_new_entry = pos_map.lazy_emplace_l(
             std::move(fen), [&](map_t::value_type &p) { ++p.second; },
             [&](const map_t::constructor &ctor) { ctor(std::move(fen), 1); });
