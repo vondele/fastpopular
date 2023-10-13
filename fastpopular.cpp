@@ -147,7 +147,7 @@ public:
     if (!do_filter || filter_side == board.sideToMove())
       if (comment != "book") {
         // std::string fen = board.getFen(false);
-        std::uint64_t key = board.zobrist();
+        std::uint64_t key = board.hash();
         std::uint64_t value;
 
         bool is_new_entry = zobrist_map.lazy_emplace_l(
