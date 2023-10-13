@@ -13,8 +13,8 @@
 enum class Result { WIN = 'W', DRAW = 'D', LOSS = 'L' };
 
 struct ResultKey {
-    Result white;
-    Result black;
+  Result white;
+  Result black;
 };
 
 struct TestMetaData {

@@ -42,137 +42,138 @@ namespace analysis {
 /// @brief Magic value for fishtest pgns, ~1.2 million keys
 static constexpr int map_size = 1200000;
 
-/// @brief Analyze a file with pgn games and update the position map, apply filter if present
+/// @brief Analyze a file with pgn games and update the position map, apply
+/// filter if present
 class Analyze : public pgn::Visitor {
-   public:
-    Analyze(const std::string &regex_engine, const std::string &move_counter, const bool stop_early, const int max_plies)
-        : regex_engine(regex_engine), move_counter(move_counter), stop_early(stop_early), max_plies(max_plies) {}
+public:
+  Analyze(const std::string &regex_engine, const std::string &move_counter,
+          const bool stop_early, const int max_plies)
+      : regex_engine(regex_engine), move_counter(move_counter),
+        stop_early(stop_early), max_plies(max_plies) {}
 
-    virtual ~Analyze() {}
+  virtual ~Analyze() {}
 
-    void startPgn() override {}
+  void startPgn() override {}
 
-    void header(std::string_view key, std::string_view value) override {
-        if (key == "FEN") {
-            std::regex p("0 1$");
+  void header(std::string_view key, std::string_view value) override {
+    if (key == "FEN") {
+      std::regex p("0 1$");
 
-            // revert change by cutechess-cli of move counters in .epd books to "0 1"
-            if (!move_counter.empty() && std::regex_search(value.data(), p)) {
-                board.setFen(std::regex_replace(value.data(), p, "0 " + move_counter));
-            } else {
-                board.setFen(value);
-            }
-        }
-
-        if (key == "Variant" && value == "fischerandom") {
-            board.set960(true);
-        }
-
-        if (key == "Result") {
-            hasResult = true;
-        }
-
-        if (key == "White") {
-            white = value;
-        }
-
-        if (key == "Black") {
-            black = value;
-        }
+      // revert change by cutechess-cli of move counters in .epd books to "0 1"
+      if (!move_counter.empty() && std::regex_search(value.data(), p)) {
+        board.setFen(std::regex_replace(value.data(), p, "0 " + move_counter));
+      } else {
+        board.setFen(value);
+      }
     }
 
-    void startMoves() override {
-        if (!hasResult) {
-            this->skipPgn(true);
-            return;
-        }
-
-        do_filter = !regex_engine.empty();
-
-        if (do_filter) {
-            if (white.empty() || black.empty()) {
-                this->skipPgn(true);
-                return;
-            }
-
-            std::regex regex(regex_engine);
-
-            if (std::regex_match(white, regex)) {
-                filter_side = Color::WHITE;
-            }
-
-            if (std::regex_match(black, regex)) {
-                if (filter_side == Color::NONE) {
-                filter_side = Color::BLACK;
-                } else {
-                do_filter = false;
-                }
-            }
-        }
+    if (key == "Variant" && value == "fischerandom") {
+      board.set960(true);
     }
 
+    if (key == "Result") {
+      hasResult = true;
+    }
 
+    if (key == "White") {
+      white = value;
+    }
 
-    void move(std::string_view move, std::string_view comment) override {
-        if (retained_plies >= max_plies) {
-            this->skipPgn(true);
-            return;
+    if (key == "Black") {
+      black = value;
+    }
+  }
+
+  void startMoves() override {
+    if (!hasResult) {
+      this->skipPgn(true);
+      return;
+    }
+
+    do_filter = !regex_engine.empty();
+
+    if (do_filter) {
+      if (white.empty() || black.empty()) {
+        this->skipPgn(true);
+        return;
+      }
+
+      std::regex regex(regex_engine);
+
+      if (std::regex_match(white, regex)) {
+        filter_side = Color::WHITE;
+      }
+
+      if (std::regex_match(black, regex)) {
+        if (filter_side == Color::NONE) {
+          filter_side = Color::BLACK;
+        } else {
+          do_filter = false;
         }
+      }
+    }
+  }
 
-        Move m;
-
-        m = uci::parseSanInternal(board, move.data(), moves);
-
-        board.makeMove(m);
-
-        if (!do_filter || filter_side == board.sideToMove())
-          if (comment != "book") {
-            std::string fen = board.getFen();
-            bool is_new_entry = pos_map.lazy_emplace_l(std::move(fen),
-                                     [&](map_t::value_type& p) { ++p.second; },
-                                     [&](const map_t::constructor& ctor) { ctor(std::move(fen), 1); });
-            if (stop_early && is_new_entry) {
-                this->skipPgn(true);
-                return;
-            }
-            retained_plies++;
-          }
+  void move(std::string_view move, std::string_view comment) override {
+    if (retained_plies >= max_plies) {
+      this->skipPgn(true);
+      return;
     }
 
-    void endPgn() override {
-        board.set960(false);
-        board.setFen(STARTPOS);
+    Move m;
 
-        hasResult       = false;
+    m = uci::parseSanInternal(board, move.data(), moves);
 
-        retained_plies  = 0;
+    board.makeMove(m);
 
-        filter_side = Color::NONE;
+    if (!do_filter || filter_side == board.sideToMove())
+      if (comment != "book") {
+        std::string fen = board.getFen();
+        bool is_new_entry = pos_map.lazy_emplace_l(
+            std::move(fen), [&](map_t::value_type &p) { ++p.second; },
+            [&](const map_t::constructor &ctor) { ctor(std::move(fen), 1); });
+        if (stop_early && is_new_entry) {
+          this->skipPgn(true);
+          return;
+        }
+        retained_plies++;
+      }
+  }
 
-        white.clear();
-        black.clear();
-    }
+  void endPgn() override {
+    board.set960(false);
+    board.setFen(STARTPOS);
 
-   private:
-    const std::string &regex_engine;
-    const std::string &move_counter;
-    const bool stop_early;
-    const int max_plies;
+    hasResult = false;
 
-    Board board;
-    Movelist moves;
+    retained_plies = 0;
 
-    bool skip = false;
+    filter_side = Color::NONE;
 
-    bool hasResult       = false;
+    white.clear();
+    black.clear();
+  }
 
-    bool do_filter    = false;
-    Color filter_side = Color::NONE;
+private:
+  const std::string &regex_engine;
+  const std::string &move_counter;
+  const bool stop_early;
+  const int max_plies;
 
-    std::string white;
-    std::string black;
+  Board board;
+  Movelist moves;
 
-    int retained_plies = 0;
+  bool skip = false;
+
+  bool hasResult = false;
+
+  bool do_filter = false;
+  Color filter_side = Color::NONE;
+
+  std::string white;
+  std::string black;
+
+  int retained_plies = 0;
 };
 
 void ana_files(const std::vector<std::string> &files,
@@ -212,16 +213,17 @@ void ana_files(const std::vector<std::string> &files,
     }
 
     const auto pgn_iterator = [&](std::istream &iss) {
-        auto vis = std::make_unique<Analyze>(regex_engine, move_counter, stop_early, max_plies);
+      auto vis = std::make_unique<Analyze>(regex_engine, move_counter,
+                                           stop_early, max_plies);
 
-        pgn::StreamParser parser(iss);
+      pgn::StreamParser parser(iss);
 
-        try {
-            parser.readGames(*vis);
-        } catch (const std::exception &e) {
-            std::cout << "Error when parsing: " << file << std::endl;
-            std::cerr << e.what() << '\n';
-        }
+      try {
+        parser.readGames(*vis);
+      } catch (const std::exception &e) {
+        std::cout << "Error when parsing: " << file << std::endl;
+        std::cerr << e.what() << '\n';
+      }
     };
 
     if (file.size() >= 3 && file.substr(file.size() - 3) == ".gz") {
@@ -349,8 +351,8 @@ void process(const std::vector<std::string> &files_pgn,
 
     pool.enqueue([&files, &regex_engine, &meta_map, &fix_fens, &progress_output,
                   &files_chunked, &max_plies, &stop_early]() {
-      analysis::ana_files(files, regex_engine, meta_map, fix_fens,
-                          max_plies, stop_early);
+      analysis::ana_files(files, regex_engine, meta_map, fix_fens, max_plies,
+                          stop_early);
 
       total_chunks++;
 
@@ -372,8 +374,7 @@ void process(const std::vector<std::string> &files_pgn,
 /// @brief Save the position map to a json file.
 /// @param pos_map
 /// @param json_filename
-void save(const std::string &filename,
-          const unsigned int min_count) {
+void save(const std::string &filename, const unsigned int min_count) {
   const auto t0 = std::chrono::high_resolution_clock::now();
 
   std::uint64_t total = 0;
@@ -390,7 +391,11 @@ void save(const std::string &filename,
   const auto t1 = std::chrono::high_resolution_clock::now();
 
   std::cout << "Wrote " << total << " scored positions to " << filename
-            << " for analysis in " << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count() / 1000.0 << "s" << std::endl;
+            << " for analysis in "
+            << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0)
+                       .count() /
+                   1000.0
+            << "s" << std::endl;
 }
 
 void print_usage(char const *program_name) {
@@ -511,13 +516,15 @@ int main(int argc, char const *argv[]) {
 
   const auto t0 = std::chrono::high_resolution_clock::now();
 
-  process(files_pgn, regex_engine, meta_map, fix_fens, max_plies,
-          stop_early, concurrency);
+  process(files_pgn, regex_engine, meta_map, fix_fens, max_plies, stop_early,
+          concurrency);
 
   const auto t1 = std::chrono::high_resolution_clock::now();
 
   std::cout << "\nTime taken for processing: "
-            << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count() / 1000.0
+            << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0)
+                       .count() /
+                   1000.0
             << "s" << std::endl;
 
   save(filename, min_count);
