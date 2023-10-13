@@ -333,6 +333,9 @@ void process(const std::vector<std::string> &files_pgn,
 /// @param json_filename
 void save(const std::string &filename,
           const unsigned int min_count) {
+
+  const auto t0 = std::chrono::high_resolution_clock::now();
+
   std::uint64_t total = 0;
 
   std::ofstream out_file(filename);
@@ -344,8 +347,10 @@ void save(const std::string &filename,
   }
   out_file.close();
 
+  const auto t1 = std::chrono::high_resolution_clock::now();
+
   std::cout << "Wrote " << total << " scored positions to " << filename
-            << " for analysis." << std::endl;
+            << " for analysis in " << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count() / 1000.0 << "s" << std::endl;
 }
 
 void print_usage(char const *program_name) {
@@ -471,8 +476,8 @@ int main(int argc, char const *argv[]) {
 
   const auto t1 = std::chrono::high_resolution_clock::now();
 
-  std::cout << "\nTime taken: "
-            << std::chrono::duration_cast<std::chrono::seconds>(t1 - t0).count()
+  std::cout << "\nTime taken for processing: "
+            << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count() / 1000.0
             << "s" << std::endl;
 
   save(filename, min_count);
