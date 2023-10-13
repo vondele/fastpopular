@@ -52,30 +52,6 @@ class Analyze : public pgn::Visitor {
 
     void startPgn() override {}
 
-    void startMoves() override {
-        do_filter = !regex_engine.empty();
-
-        if (do_filter) {
-            if (white.empty() || black.empty()) {
-                return;
-            }
-
-            std::regex regex(regex_engine);
-
-            if (std::regex_match(white, regex)) {
-                filter_side = Color::WHITE;
-            }
-
-            if (std::regex_match(black, regex)) {
-                if (filter_side == Color::NONE) {
-                    filter_side = Color::BLACK;
-                } else {
-                    do_filter = false;
-                }
-            }
-        }
-    }
-
     void header(std::string_view key, std::string_view value) override {
         if (key == "FEN") {
             std::regex p("0 1$");
@@ -93,27 +69,7 @@ class Analyze : public pgn::Visitor {
         }
 
         if (key == "Result") {
-            hasResult  = true;
-            goodResult = true;
-
-            if (value == "1-0") {
-                resultkey.white = Result::WIN;
-                resultkey.black = Result::LOSS;
-            } else if (value == "0-1") {
-                resultkey.white = Result::LOSS;
-                resultkey.black = Result::WIN;
-            } else if (value == "1/2-1/2") {
-                resultkey.white = Result::DRAW;
-                resultkey.black = Result::DRAW;
-            } else {
-                goodResult = false;
-            }
-        }
-
-        if (key == "Termination") {
-            if (value == "time forfeit" || value == "abandoned") {
-                goodTermination = false;
-            }
+            hasResult = true;
         }
 
         if (key == "White") {
@@ -123,18 +79,45 @@ class Analyze : public pgn::Visitor {
         if (key == "Black") {
             black = value;
         }
-
-        skip = !(hasResult && goodTermination && goodResult);
-        skip = !hasResult; /* TODO */
     }
 
-    void move(std::string_view move, std::string_view comment) override {
-        if (skip) {
+    void startMoves() override {
+        if (!hasResult) {
+            this->skipPgn(true);
             return;
         }
 
-        if (retained_plies >= max_plies)
+        do_filter = !regex_engine.empty();
+
+        if (do_filter) {
+            if (white.empty() || black.empty()) {
+                this->skipPgn(true);
+                return;
+            }
+
+            std::regex regex(regex_engine);
+
+            if (std::regex_match(white, regex)) {
+                filter_side = Color::WHITE;
+            }
+
+            if (std::regex_match(black, regex)) {
+                if (filter_side == Color::NONE) {
+                filter_side = Color::BLACK;
+                } else {
+                do_filter = false;
+                }
+            }
+        }
+    }
+
+
+
+    void move(std::string_view move, std::string_view comment) override {
+        if (retained_plies >= max_plies) {
+            this->skipPgn(true);
             return;
+        }
 
         Move m;
 
@@ -149,7 +132,7 @@ class Analyze : public pgn::Visitor {
                                      [&](map_t::value_type& p) { ++p.second; },
                                      [&](const map_t::constructor& ctor) { ctor(std::move(fen), 1); });
             if (stop_early && is_new_entry) {
-                skip = true;
+                this->skipPgn(true);
                 return;
             }
             retained_plies++;
@@ -160,9 +143,7 @@ class Analyze : public pgn::Visitor {
         board.set960(false);
         board.setFen(STARTPOS);
 
-        goodTermination = true;
         hasResult       = false;
-        goodResult      = false;
 
         retained_plies  = 0;
 
@@ -183,17 +164,13 @@ class Analyze : public pgn::Visitor {
 
     bool skip = false;
 
-    bool goodTermination = true;
     bool hasResult       = false;
-    bool goodResult      = false;
 
     bool do_filter    = false;
     Color filter_side = Color::NONE;
 
     std::string white;
     std::string black;
-
-    ResultKey resultkey;
 
     int retained_plies = 0;
 };
@@ -397,7 +374,6 @@ void process(const std::vector<std::string> &files_pgn,
 /// @param json_filename
 void save(const std::string &filename,
           const unsigned int min_count) {
-
   const auto t0 = std::chrono::high_resolution_clock::now();
 
   std::uint64_t total = 0;
@@ -405,7 +381,7 @@ void save(const std::string &filename,
   std::ofstream out_file(filename);
   for (const auto &pair : pos_map) {
     if (pair.second >= min_count) {
-      out_file << pair.first << " ; c0 " << pair.second << std::endl;
+      out_file << pair.first << " ; c0 " << pair.second << "\n";
       total++;
     }
   }
