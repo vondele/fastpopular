@@ -397,7 +397,6 @@ void process(const std::vector<std::string> &files_pgn,
 /// @param json_filename
 void save(const std::string &filename,
           const unsigned int min_count) {
-
   const auto t0 = std::chrono::high_resolution_clock::now();
 
   std::uint64_t total = 0;
@@ -405,7 +404,7 @@ void save(const std::string &filename,
   std::ofstream out_file(filename);
   for (const auto &pair : pos_map) {
     if (pair.second >= min_count) {
-      out_file << pair.first << " ; c0 " << pair.second << std::endl;
+      out_file << pair.first << " ; c0 " << pair.second << "\n";
       total++;
     }
   }
