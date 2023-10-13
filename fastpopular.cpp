@@ -24,18 +24,29 @@ using json = nlohmann::json;
 
 using namespace chess;
 
-// unordered map to count fens
-using map_t = phmap::parallel_flat_hash_map<
-    std::string, std::uint64_t, std::hash<std::string>,
-    std::equal_to<std::string>,
-    std::allocator<std::pair<const std::string, std::uint64_t>>, 8, std::mutex>;
+// unordered map to count zobrist keys
+using zobrist_map_t = phmap::parallel_flat_hash_map<
+    std::uint64_t, std::uint64_t, std::hash<std::uint64_t>,
+    std::equal_to<std::uint64_t>,
+    std::allocator<std::pair<const std::uint64_t, std::uint64_t>>, 8,
+    std::mutex>;
 
-map_t pos_map;
+zobrist_map_t zobrist_map;
+
+// unordered map from zobrist keys to fen strings
+using fen_map_t = phmap::parallel_flat_hash_map<
+    std::uint64_t, std::string, std::hash<std::uint64_t>,
+    std::equal_to<std::uint64_t>,
+    std::allocator<std::pair<const std::uint64_t, std::string>>, 8, std::mutex>;
+
+fen_map_t fen_map;
 
 // map to collect metadata for tests
 using map_meta = std::unordered_map<std::string, TestMetaData>;
 
-std::atomic<std::size_t> total_chunks = 0;
+std::atomic<std::size_t> total_files = 0;
+std::atomic<std::size_t> total_games = 0;
+std::atomic<std::size_t> total_pos = 0;
 
 namespace analysis {
 
@@ -47,15 +58,22 @@ static constexpr int map_size = 1200000;
 class Analyze : public pgn::Visitor {
 public:
   Analyze(const std::string &regex_engine, const std::string &move_counter,
-          const bool stop_early, const int max_plies)
+          const bool stop_early, const int max_plies, std::ofstream &out_file,
+          const int min_count, const bool save_count,
+          std::mutex &progress_output)
       : regex_engine(regex_engine), move_counter(move_counter),
-        stop_early(stop_early), max_plies(max_plies) {}
+        stop_early(stop_early), max_plies(max_plies), out_file(out_file),
+        min_count(min_count), save_count(save_count),
+        progress_output(progress_output) {}
 
   virtual ~Analyze() {}
 
   void startPgn() override {}
 
   void header(std::string_view key, std::string_view value) override {
+
+    total_games++;
+
     if (key == "FEN") {
       std::regex p("0 1$");
 
@@ -128,10 +146,29 @@ public:
 
     if (!do_filter || filter_side == board.sideToMove())
       if (comment != "book") {
-        std::string fen = board.getFen(false);
-        bool is_new_entry = pos_map.lazy_emplace_l(
-            std::move(fen), [&](map_t::value_type &p) { ++p.second; },
-            [&](const map_t::constructor &ctor) { ctor(std::move(fen), 1); });
+        // std::string fen = board.getFen(false);
+        std::uint64_t key = board.zobrist();
+        std::uint64_t value;
+
+        bool is_new_entry = zobrist_map.lazy_emplace_l(
+            std::move(key),
+            [&](zobrist_map_t::value_type &p) { value = ++p.second; },
+            [&](const zobrist_map_t::constructor &ctor) {
+              ctor(std::move(key), 1);
+              value = 1;
+            });
+
+        if (value == std::uint64_t(min_count)) {
+          total_pos++;
+          std::string fen = board.getFen(false);
+          if (save_count) {
+            fen_map.insert(std::pair(key, fen));
+          } else {
+            const std::lock_guard<std::mutex> lock(progress_output);
+            out_file << fen << "\n";
+          }
+        }
+
         if (stop_early && is_new_entry) {
           this->skipPgn(true);
           return;
@@ -159,6 +196,10 @@ private:
   const std::string &move_counter;
   const bool stop_early;
   const int max_plies;
+  std::ofstream &out_file;
+  const int min_count;
+  const bool save_count;
+  std::mutex &progress_output;
 
   Board board;
   Movelist moves;
@@ -178,7 +219,9 @@ private:
 
 void ana_files(const std::vector<std::string> &files,
                const std::string &regex_engine, const map_meta &meta_map,
-               bool fix_fens, const int max_plies, const bool stop_early) {
+               bool fix_fens, const int max_plies, const bool stop_early,
+               std::ofstream &out_file, const int min_count,
+               const bool save_count, std::mutex &progress_output) {
 
   for (const auto &file : files) {
     std::string move_counter;
@@ -213,8 +256,9 @@ void ana_files(const std::vector<std::string> &files,
     }
 
     const auto pgn_iterator = [&](std::istream &iss) {
-      auto vis = std::make_unique<Analyze>(regex_engine, move_counter,
-                                           stop_early, max_plies);
+      auto vis = std::make_unique<Analyze>(
+          regex_engine, move_counter, stop_early, max_plies, out_file,
+          min_count, save_count, progress_output);
 
       pgn::StreamParser parser(iss);
 
@@ -233,6 +277,16 @@ void ana_files(const std::vector<std::string> &files,
       std::ifstream pgn_stream(file);
       pgn_iterator(pgn_stream);
       pgn_stream.close();
+    }
+
+    ++total_files;
+
+    // Limit the scope of the lock
+    {
+      const std::lock_guard<std::mutex> lock(progress_output);
+
+      // Print progress
+      std::cout << "\rProcessed " << total_files << " files" << std::flush;
     }
   }
 }
@@ -328,7 +382,8 @@ void filter_files_sprt(std::vector<std::string> &file_list,
 void process(const std::vector<std::string> &files_pgn,
              const std::string &regex_engine, const map_meta &meta_map,
              bool fix_fens, const int max_plies, const bool stop_early,
-             int concurrency) {
+             std::ofstream &out_file, const int min_count,
+             const bool save_count, int concurrency) {
   // Create more chunks than threads to prevent threads from idling.
   int target_chunks = 4 * concurrency;
 
@@ -343,59 +398,19 @@ void process(const std::vector<std::string> &files_pgn,
   // Create a thread pool
   ThreadPool pool(concurrency);
 
-  // Print progress
-  std::cout << "\rProgress: " << total_chunks << "/" << files_chunked.size()
-            << std::flush;
-
   for (const auto &files : files_chunked) {
 
     pool.enqueue([&files, &regex_engine, &meta_map, &fix_fens, &progress_output,
-                  &files_chunked, &max_plies, &stop_early]() {
+                  &files_chunked, &max_plies, &stop_early, &out_file,
+                  &min_count, &save_count]() {
       analysis::ana_files(files, regex_engine, meta_map, fix_fens, max_plies,
-                          stop_early);
-
-      total_chunks++;
-
-      // Limit the scope of the lock
-      {
-        const std::lock_guard<std::mutex> lock(progress_output);
-
-        // Print progress
-        std::cout << "\rProgress: " << total_chunks << "/"
-                  << files_chunked.size() << std::flush;
-      }
+                          stop_early, out_file, min_count, save_count,
+                          progress_output);
     });
   }
 
   // Wait for all threads to finish
   pool.wait();
-}
-
-/// @brief Save the position map to a json file.
-/// @param pos_map
-/// @param json_filename
-void save(const std::string &filename, const unsigned int min_count) {
-  const auto t0 = std::chrono::high_resolution_clock::now();
-
-  std::uint64_t total = 0;
-
-  std::ofstream out_file(filename);
-  for (const auto &pair : pos_map) {
-    if (pair.second >= min_count) {
-      out_file << pair.first << " ; c0 " << pair.second << "\n";
-      total++;
-    }
-  }
-  out_file.close();
-
-  const auto t1 = std::chrono::high_resolution_clock::now();
-
-  std::cout << "Wrote " << total << " scored positions to " << filename
-            << " for analysis in "
-            << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0)
-                       .count() /
-                   1000.0
-            << "s" << std::endl;
 }
 
 void print_usage(char const *program_name) {
@@ -417,6 +432,7 @@ void print_usage(char const *program_name) {
     ss << "  --maxPlies <N>        Maximum number of plies to consider from the game, excluding book moves (default 20)" << "\n";
     ss << "  --stopEarly           Stop analysing the game as soon as a new position is reached (default false) for the analysing thread." << "\n";
     ss << "  --minCount <N>        Minimum count of the positin before being written to file (default 1)" << "\n";
+    ss << "  --saveCount           Add to the output file the count of each position. This adds significant memory overhead." << "\n";
     ss << "  -o <path>             Path to output epd file (default: popular.epd)" << "\n";
     ss << "  --help                Print this help message" << "\n";
   // clang-format on
@@ -499,6 +515,7 @@ int main(int argc, char const *argv[]) {
   }
 
   bool stop_early = find_argument(args, pos, "--stopEarly", true);
+  bool save_count = find_argument(args, pos, "--saveCount", true);
 
   if (find_argument(args, pos, "--minCount")) {
     min_count = std::stoi(*std::next(pos));
@@ -514,20 +531,29 @@ int main(int argc, char const *argv[]) {
     filename = *std::next(pos);
   }
 
+  std::ofstream out_file(filename);
+
   const auto t0 = std::chrono::high_resolution_clock::now();
 
   process(files_pgn, regex_engine, meta_map, fix_fens, max_plies, stop_early,
-          concurrency);
+          out_file, min_count, save_count, concurrency);
+
+  if (save_count) {
+    for (const auto &pair : fen_map) {
+      out_file << pair.second << " ; c0 " << zobrist_map[pair.first] << "\n";
+    }
+  }
+
+  out_file.close();
 
   const auto t1 = std::chrono::high_resolution_clock::now();
 
-  std::cout << "\nTime taken for processing: "
+  std::cout << "\nFound " << total_pos << " positions in " << total_games << " games."
+            << "\nTotal time for processing: "
             << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0)
                        .count() /
                    1000.0
             << "s" << std::endl;
-
-  save(filename, min_count);
 
   return 0;
 }
