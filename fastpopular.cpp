@@ -357,6 +357,7 @@ void filter_files_book(std::vector<std::string> &file_list,
         meta_map.at(test_filename).book.has_value()) {
       bool match =
           std::regex_match(meta_map.at(test_filename).book.value(), regex_book);
+
       return invert ? match : !match;
     }
 
@@ -375,7 +376,8 @@ void filter_files_sprt(std::vector<std::string> &file_list,
 
     // check if metadata and "sprt" entry exist
     if (meta_map.find(test_filename) != meta_map.end() &&
-        meta_map.at(test_filename).sprt.has_value()) {
+        meta_map.at(test_filename).sprt.has_value() &&
+        meta_map.at(test_filename).sprt.value()) {
       return false;
     }
 
