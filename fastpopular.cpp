@@ -542,18 +542,22 @@ int main(int argc, char const *argv[]) {
     for (const auto &pair : fen_map) {
       out_file << pair.second << " ; c0 " << zobrist_map[pair.first] << "\n";
     }
+  } else {
+    // TODO ? in principle one could read the file of written positions, compute the hash,
+    // obtain the count from the zobrist_map and rewrite the file.
   }
 
   out_file.close();
 
   const auto t1 = std::chrono::high_resolution_clock::now();
 
-  std::cout << "\nFound " << total_pos << " positions in " << total_games << " games."
+  std::cout << "\nRetained " << total_pos << " positions from " << zobrist_map.size()
+            << " unique visited in " << total_games << " games."
             << "\nTotal time for processing: "
             << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0)
                        .count() /
                    1000.0
-            << "s" << std::endl;
+            << " s" << std::endl;
 
   return 0;
 }
