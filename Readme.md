@@ -13,8 +13,8 @@ Retained 16619788 positions from 199330734 unique visited in 496063288 games.
 Total time for processing: 64.788 s
 ```
 
-This analyzes all games in the given directory (and all its subdirectories), analyzing games at most 20 plies deep out of the book,
-skipping the remainder of the game if a new position was found, and writing eventually all positions that have been seen 3 times or more.
+This analyzes all games in the given directory (and all its subdirectories), analyzing games at most 60 plies deep out of the book,
+skipping the remainder of the game if 6 new positions were found, and writing eventually all positions that have been seen 8 times or more.
 
 The analysis runs multi-threaded, typically limited by the speed of the storage.
 
