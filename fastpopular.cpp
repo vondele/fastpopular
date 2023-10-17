@@ -60,11 +60,12 @@ public:
   Analyze(const std::string &regex_engine, const std::string &move_counter,
           const unsigned int count_stop_early, const int max_plies,
           std::ofstream &out_file, const int min_count, const bool save_count,
-          std::mutex &progress_output)
+          const bool omit_move_counter, std::mutex &progress_output)
       : regex_engine(regex_engine), move_counter(move_counter),
         count_stop_early(count_stop_early), max_plies(max_plies),
         out_file(out_file), min_count(min_count), save_count(save_count),
-        progress_output(progress_output) {}
+        omit_move_counter(omit_move_counter), progress_output(progress_output) {
+  }
 
   virtual ~Analyze() {}
 
@@ -161,7 +162,7 @@ public:
 
         if (value == std::uint64_t(min_count)) {
           total_pos++;
-          std::string fen = board.getFen(false);
+          std::string fen = board.getFen(!omit_move_counter);
           if (save_count) {
             fen_map.insert(std::pair(key, fen));
           } else {
@@ -204,6 +205,7 @@ private:
   std::ofstream &out_file;
   const int min_count;
   const bool save_count;
+  const bool omit_move_counter;
   std::mutex &progress_output;
 
   Board board;
@@ -228,7 +230,7 @@ void ana_files(const std::vector<std::string> &files,
                bool fix_fens, const int max_plies,
                const unsigned int count_stop_early, std::ofstream &out_file,
                const int min_count, const bool save_count,
-               std::mutex &progress_output) {
+               const bool omit_move_counter, std::mutex &progress_output) {
 
   for (const auto &file : files) {
     std::string move_counter;
@@ -265,7 +267,7 @@ void ana_files(const std::vector<std::string> &files,
     const auto pgn_iterator = [&](std::istream &iss) {
       auto vis = std::make_unique<Analyze>(
           regex_engine, move_counter, count_stop_early, max_plies, out_file,
-          min_count, save_count, progress_output);
+          min_count, save_count, omit_move_counter, progress_output);
 
       pgn::StreamParser parser(iss);
 
@@ -392,7 +394,8 @@ void process(const std::vector<std::string> &files_pgn,
              const std::string &regex_engine, const map_meta &meta_map,
              bool fix_fens, const int max_plies,
              const unsigned int count_stop_early, std::ofstream &out_file,
-             const int min_count, const bool save_count, int concurrency) {
+             const int min_count, const bool save_count,
+             const bool omit_move_counter, int concurrency) {
   // Create more chunks than threads to prevent threads from idling.
   int target_chunks = 4 * concurrency;
 
@@ -411,10 +414,10 @@ void process(const std::vector<std::string> &files_pgn,
 
     pool.enqueue([&files, &regex_engine, &meta_map, &fix_fens, &progress_output,
                   &files_chunked, &max_plies, &count_stop_early, &out_file,
-                  &min_count, &save_count]() {
+                  &min_count, &save_count, omit_move_counter]() {
       analysis::ana_files(files, regex_engine, meta_map, fix_fens, max_plies,
                           count_stop_early, out_file, min_count, save_count,
-                          progress_output);
+                          omit_move_counter, progress_output);
     });
   }
 
@@ -443,6 +446,7 @@ void print_usage(char const *program_name) {
     ss << "  --countStopEarly <N>  Number of new positions encountered before stopping with stopEarly (default 1)" << "\n";
     ss << "  --minCount <N>        Minimum count of the positin before being written to file (default 1)" << "\n";
     ss << "  --saveCount           Add to the output file the count of each position. This adds significant memory overhead (but can be faster)." << "\n";
+    ss << "  --omitMoveCounter     Omit movecounter when storing the FEN (the same position with different movecounters is still only stored once)" << "\n";
     ss << "  -o <path>             Path to output epd file (default: popular.epd)" << "\n";
     ss << "  --help                Print this help message" << "\n";
   // clang-format on
@@ -502,6 +506,7 @@ int main(int argc, char const *argv[]) {
     }
   }
 
+  bool omit_move_counter = find_argument(args, pos, "--omitMoveCounter", true);
   bool allow_duplicates = find_argument(args, pos, "--allowDuplicates", true);
   auto meta_map = get_metadata(files_pgn, allow_duplicates);
 
@@ -553,7 +558,8 @@ int main(int argc, char const *argv[]) {
   const auto t0 = std::chrono::high_resolution_clock::now();
 
   process(files_pgn, regex_engine, meta_map, fix_fens, max_plies,
-          count_stop_early, out_file, min_count, save_count, concurrency);
+          count_stop_early, out_file, min_count, save_count, omit_move_counter,
+          concurrency);
 
   if (save_count) {
     for (const auto &pair : fen_map) {

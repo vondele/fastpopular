@@ -33,17 +33,19 @@ std::optional<T> get_optional(const nlohmann::json &j, const char *name) {
   }
 }
 
-void from_json(const nlohmann::json &nlohmann_json_j, TestMetaData &nlohmann_json_t) {
-    auto &j = nlohmann_json_j["args"];
+void from_json(const nlohmann::json &nlohmann_json_j,
+               TestMetaData &nlohmann_json_t) {
+  auto &j = nlohmann_json_j["args"];
 
-    nlohmann_json_t.book_depth =
-        get_optional(j, "book_depth").has_value()
-            ? std::optional<int>(std::stoi(get_optional(j, "book_depth").value()))
-            : std::nullopt;
+  nlohmann_json_t.book_depth =
+      get_optional(j, "book_depth").has_value()
+          ? std::optional<int>(std::stoi(get_optional(j, "book_depth").value()))
+          : std::nullopt;
 
-    nlohmann_json_t.sprt = j.contains("sprt") ? std::optional<bool>(true) : std::nullopt;
+  nlohmann_json_t.sprt =
+      j.contains("sprt") ? std::optional<bool>(true) : std::nullopt;
 
-    nlohmann_json_t.book = get_optional(j, "book");
+  nlohmann_json_t.book = get_optional(j, "book");
 }
 
 /// @brief Custom stof implementation to avoid locale issues, once clang
