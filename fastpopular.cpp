@@ -184,7 +184,7 @@ public:
 
   void endPgn() override {
     board.set960(false);
-    board.setFen(STARTPOS);
+    board.setFen(constants::STARTPOS);
 
     hasResult = false;
 
