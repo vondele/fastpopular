@@ -73,8 +73,6 @@ public:
 
   void header(std::string_view key, std::string_view value) override {
 
-    total_games++;
-
     if (key == "FEN") {
       std::regex p("0 1$");
 
@@ -131,6 +129,8 @@ public:
         }
       }
     }
+    total_games++;
+
   }
 
   void move(std::string_view move, std::string_view comment) override {
