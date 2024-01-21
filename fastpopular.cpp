@@ -142,7 +142,7 @@ public:
 
     Move m;
 
-    m = uci::parseSanInternal(board, move.data(), moves);
+    m = uci::parseSan(board, move, moves);
 
     board.makeMove(m);
 
