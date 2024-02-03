@@ -146,7 +146,7 @@ public:
 
     board.makeMove(m);
 
-    if (tb_limit > 2) {
+    if (tb_limit > 1) {
       unsigned int piece_count = board.occ().count();
       if (piece_count <= tb_limit) {
         this->skipPgn(true);
@@ -472,7 +472,7 @@ void print_usage(char const *program_name) {
     ss << "  --minCount <N>        Minimum count of the positin before being written to file (default 1)" << "\n";
     ss << "  --saveCount           Add to the output file the count of each position. This adds significant memory overhead (but can be faster)." << "\n";
     ss << "  --omitMoveCounter     Omit movecounter when storing the FEN (the same position with different movecounters is still only stored once)" << "\n";
-    ss << "  --TBlimit <N>         Omit positions with N pieces, or fewer (default: 2)" << "\n";
+    ss << "  --TBlimit <N>         Omit positions with N pieces, or fewer (default: 1)" << "\n";
     ss << "  --omitMates           Omit positions without a legal move (check/stale mates)" << "\n";
     ss << "  --cdb                 Shorthand for --TBlimit 7 --omitMates" << "\n";
     ss << "  -o <path>             Path to output epd file (default: popular.epd)" << "\n";
@@ -536,10 +536,10 @@ int main(int argc, char const *argv[]) {
 
   bool omit_move_counter = find_argument(args, pos, "--omitMoveCounter", true);
   bool allow_duplicates = find_argument(args, pos, "--allowDuplicates", true);
-  unsigned int tb_limit = 2;
+  unsigned int tb_limit = 1;
   bool omit_mates = false;
   if (find_argument(args, pos, "--cdb", true)) {
-    tb_limit = 2;
+    tb_limit = 7;
     omit_mates = true;
   } else {
     if (find_argument(args, pos, "--TBlimit")) {

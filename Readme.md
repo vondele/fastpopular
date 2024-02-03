@@ -37,7 +37,7 @@ Options:
   --minCount <N>        Minimum count of the positin before being written to file (default 1)
   --saveCount           Add to the output file the count of each position. This adds significant memory overhead (but can be faster).
   --omitMoveCounter     Omit movecounter when storing the FEN (the same position with different movecounters is still only stored once)
-  --TBlimit <N>         Omit positions with N pieces, or fewer (default: 2)
+  --TBlimit <N>         Omit positions with N pieces, or fewer (default: 1)
   --omitMates           Omit positions without a legal move (check/stale mates)
   --cdb                 Shorthand for --TBlimit 7 --omitMates
   -o <path>             Path to output epd file (default: popular.epd)
