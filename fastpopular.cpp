@@ -60,12 +60,13 @@ public:
   Analyze(const std::string &regex_engine, const std::string &move_counter,
           const unsigned int count_stop_early, const int max_plies,
           std::ofstream &out_file, const int min_count, const bool save_count,
-          const bool omit_move_counter, std::mutex &progress_output)
+          const bool omit_move_counter, const unsigned int tb_limit,
+          const bool omit_mates, std::mutex &progress_output)
       : regex_engine(regex_engine), move_counter(move_counter),
         count_stop_early(count_stop_early), max_plies(max_plies),
         out_file(out_file), min_count(min_count), save_count(save_count),
-        omit_move_counter(omit_move_counter), progress_output(progress_output) {
-  }
+        omit_move_counter(omit_move_counter), tb_limit(tb_limit),
+        omit_mates(omit_mates), progress_output(progress_output) {}
 
   virtual ~Analyze() {}
 
@@ -130,7 +131,6 @@ public:
       }
     }
     total_games++;
-
   }
 
   void move(std::string_view move, std::string_view comment) override {
@@ -145,6 +145,24 @@ public:
     m = uci::parseSan(board, move, moves);
 
     board.makeMove(m);
+
+    if (tb_limit > 1) {
+      unsigned int piece_count = board.occ().count();
+      if (piece_count <= tb_limit) {
+        this->skipPgn(true);
+        return;
+      }
+    }
+
+    if (omit_mates) {
+      Movelist movelist;
+      movegen::legalmoves(movelist, board);
+
+      if (movelist.empty()) {
+        this->skipPgn(true);
+        return;
+      }
+    }
 
     if (!do_filter || filter_side == board.sideToMove())
       if (comment != "book") {
@@ -206,6 +224,8 @@ private:
   const int min_count;
   const bool save_count;
   const bool omit_move_counter;
+  const unsigned int tb_limit;
+  const bool omit_mates;
   std::mutex &progress_output;
 
   Board board;
@@ -230,7 +250,8 @@ void ana_files(const std::vector<std::string> &files,
                bool fix_fens, const int max_plies,
                const unsigned int count_stop_early, std::ofstream &out_file,
                const int min_count, const bool save_count,
-               const bool omit_move_counter, std::mutex &progress_output) {
+               const bool omit_move_counter, const unsigned int tb_limit,
+               const bool omit_mates, std::mutex &progress_output) {
 
   for (const auto &file : files) {
     std::string move_counter;
@@ -267,7 +288,8 @@ void ana_files(const std::vector<std::string> &files,
     const auto pgn_iterator = [&](std::istream &iss) {
       auto vis = std::make_unique<Analyze>(
           regex_engine, move_counter, count_stop_early, max_plies, out_file,
-          min_count, save_count, omit_move_counter, progress_output);
+          min_count, save_count, omit_move_counter, tb_limit, omit_mates,
+          progress_output);
 
       pgn::StreamParser parser(iss);
 
@@ -395,7 +417,8 @@ void process(const std::vector<std::string> &files_pgn,
              bool fix_fens, const int max_plies,
              const unsigned int count_stop_early, std::ofstream &out_file,
              const int min_count, const bool save_count,
-             const bool omit_move_counter, int concurrency) {
+             const bool omit_move_counter, const unsigned int tb_limit,
+             const bool omit_mates, int concurrency) {
   // Create more chunks than threads to prevent threads from idling.
   int target_chunks = 4 * concurrency;
 
@@ -414,10 +437,12 @@ void process(const std::vector<std::string> &files_pgn,
 
     pool.enqueue([&files, &regex_engine, &meta_map, &fix_fens, &progress_output,
                   &files_chunked, &max_plies, &count_stop_early, &out_file,
-                  &min_count, &save_count, omit_move_counter]() {
+                  &min_count, &save_count, omit_move_counter, &tb_limit,
+                  &omit_mates]() {
       analysis::ana_files(files, regex_engine, meta_map, fix_fens, max_plies,
                           count_stop_early, out_file, min_count, save_count,
-                          omit_move_counter, progress_output);
+                          omit_move_counter, tb_limit, omit_mates,
+                          progress_output);
     });
   }
 
@@ -447,6 +472,9 @@ void print_usage(char const *program_name) {
     ss << "  --minCount <N>        Minimum count of the positin before being written to file (default 1)" << "\n";
     ss << "  --saveCount           Add to the output file the count of each position. This adds significant memory overhead (but can be faster)." << "\n";
     ss << "  --omitMoveCounter     Omit movecounter when storing the FEN (the same position with different movecounters is still only stored once)" << "\n";
+    ss << "  --TBlimit <N>         Omit positions with N pieces, or fewer (default: 1)" << "\n";
+    ss << "  --omitMates           Omit positions without a legal move (check/stale mates)" << "\n";
+    ss << "  --cdb                 Shorthand for --TBlimit 7 --omitMates" << "\n";
     ss << "  -o <path>             Path to output epd file (default: popular.epd)" << "\n";
     ss << "  --help                Print this help message" << "\n";
   // clang-format on
@@ -508,6 +536,17 @@ int main(int argc, char const *argv[]) {
 
   bool omit_move_counter = find_argument(args, pos, "--omitMoveCounter", true);
   bool allow_duplicates = find_argument(args, pos, "--allowDuplicates", true);
+  unsigned int tb_limit = 1;
+  bool omit_mates = false;
+  if (find_argument(args, pos, "--cdb", true)) {
+    tb_limit = 7;
+    omit_mates = true;
+  } else {
+    if (find_argument(args, pos, "--TBlimit")) {
+      tb_limit = std::stoi(*std::next(pos));
+    }
+    omit_mates = find_argument(args, pos, "--omitMates", true);
+  }
   auto meta_map = get_metadata(files_pgn, allow_duplicates);
 
   if (find_argument(args, pos, "--SPRTonly", true)) {
@@ -559,7 +598,7 @@ int main(int argc, char const *argv[]) {
 
   process(files_pgn, regex_engine, meta_map, fix_fens, max_plies,
           count_stop_early, out_file, min_count, save_count, omit_move_counter,
-          concurrency);
+          tb_limit, omit_mates, concurrency);
 
   if (save_count) {
     for (const auto &pair : fen_map) {
