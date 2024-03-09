@@ -61,12 +61,13 @@ public:
           const unsigned int count_stop_early, const int max_plies,
           std::ofstream &out_file, const int min_count, const bool save_count,
           const bool omit_move_counter, const unsigned int tb_limit,
-          const bool omit_mates, std::mutex &progress_output)
+          const bool omit_mates, const int min_Elo, std::mutex &progress_output)
       : regex_engine(regex_engine), move_counter(move_counter),
         count_stop_early(count_stop_early), max_plies(max_plies),
         out_file(out_file), min_count(min_count), save_count(save_count),
         omit_move_counter(omit_move_counter), tb_limit(tb_limit),
-        omit_mates(omit_mates), progress_output(progress_output) {}
+        omit_mates(omit_mates), min_Elo(min_Elo),
+        progress_output(progress_output) {}
 
   virtual ~Analyze() {}
 
@@ -100,10 +101,22 @@ public:
     if (key == "Black") {
       black = value;
     }
+
+    if (key == "WhiteElo") {
+      whiteElo = std::atoi(value.data());
+    }
+    if (key == "BlackElo") {
+      blackElo = std::atoi(value.data());
+    }
   }
 
   void startMoves() override {
     if (!hasResult) {
+      this->skipPgn(true);
+      return;
+    }
+
+    if (whiteElo < min_Elo || blackElo < min_Elo) {
       this->skipPgn(true);
       return;
     }
@@ -213,6 +226,8 @@ public:
 
     white.clear();
     black.clear();
+
+    whiteElo = blackElo = 0;
   }
 
 private:
@@ -226,6 +241,7 @@ private:
   const bool omit_move_counter;
   const unsigned int tb_limit;
   const bool omit_mates;
+  const int min_Elo;
   std::mutex &progress_output;
 
   Board board;
@@ -241,6 +257,8 @@ private:
   std::string white;
   std::string black;
 
+  int whiteElo = 0, blackElo = 0;
+
   int retained_plies = 0;
   unsigned int new_entry_count = 0;
 };
@@ -251,7 +269,8 @@ void ana_files(const std::vector<std::string> &files,
                const unsigned int count_stop_early, std::ofstream &out_file,
                const int min_count, const bool save_count,
                const bool omit_move_counter, const unsigned int tb_limit,
-               const bool omit_mates, std::mutex &progress_output) {
+               const bool omit_mates, const int min_Elo,
+               std::mutex &progress_output) {
 
   for (const auto &file : files) {
     std::string move_counter;
@@ -289,7 +308,7 @@ void ana_files(const std::vector<std::string> &files,
       auto vis = std::make_unique<Analyze>(
           regex_engine, move_counter, count_stop_early, max_plies, out_file,
           min_count, save_count, omit_move_counter, tb_limit, omit_mates,
-          progress_output);
+          min_Elo, progress_output);
 
       pgn::StreamParser parser(iss);
 
@@ -418,7 +437,7 @@ void process(const std::vector<std::string> &files_pgn,
              const unsigned int count_stop_early, std::ofstream &out_file,
              const int min_count, const bool save_count,
              const bool omit_move_counter, const unsigned int tb_limit,
-             const bool omit_mates, int concurrency) {
+             const bool omit_mates, int min_Elo, int concurrency) {
   // Create more chunks than threads to prevent threads from idling.
   int target_chunks = 4 * concurrency;
 
@@ -438,10 +457,10 @@ void process(const std::vector<std::string> &files_pgn,
     pool.enqueue([&files, &regex_engine, &meta_map, &fix_fens, &progress_output,
                   &files_chunked, &max_plies, &count_stop_early, &out_file,
                   &min_count, &save_count, omit_move_counter, &tb_limit,
-                  &omit_mates]() {
+                  &omit_mates, &min_Elo]() {
       analysis::ana_files(files, regex_engine, meta_map, fix_fens, max_plies,
                           count_stop_early, out_file, min_count, save_count,
-                          omit_move_counter, tb_limit, omit_mates,
+                          omit_move_counter, tb_limit, omit_mates, min_Elo,
                           progress_output);
     });
   }
@@ -474,6 +493,7 @@ void print_usage(char const *program_name) {
     ss << "  --omitMoveCounter     Omit movecounter when storing the FEN (the same position with different movecounters is still only stored once)" << "\n";
     ss << "  --TBlimit <N>         Omit positions with N pieces, or fewer (default: 1)" << "\n";
     ss << "  --omitMates           Omit positions without a legal move (check/stale mates)" << "\n";
+    ss << "  --minElo <N>          Omit games where WhiteElo or BlackElo < minElo (default: 0)" << "\n";
     ss << "  --cdb                 Shorthand for --TBlimit 7 --omitMates" << "\n";
     ss << "  -o <path>             Path to output epd file (default: popular.epd)" << "\n";
     ss << "  --help                Print this help message" << "\n";
@@ -492,6 +512,7 @@ int main(int argc, char const *argv[]) {
   std::vector<std::string> files_pgn;
   std::string regex_engine, regex_book, filename = "popular.epd";
   int max_plies = 20;
+  int min_Elo = 0;
   unsigned int min_count = 1;
   unsigned int count_stop_early = 1;
   int concurrency = std::max(1, int(std::thread::hardware_concurrency()));
@@ -547,6 +568,11 @@ int main(int argc, char const *argv[]) {
     }
     omit_mates = find_argument(args, pos, "--omitMates", true);
   }
+
+  if (find_argument(args, pos, "--minElo")) {
+    min_Elo = std::stoi(*std::next(pos));
+  }
+
   auto meta_map = get_metadata(files_pgn, allow_duplicates);
 
   if (find_argument(args, pos, "--SPRTonly", true)) {
@@ -598,7 +624,7 @@ int main(int argc, char const *argv[]) {
 
   process(files_pgn, regex_engine, meta_map, fix_fens, max_plies,
           count_stop_early, out_file, min_count, save_count, omit_move_counter,
-          tb_limit, omit_mates, concurrency);
+          tb_limit, omit_mates, min_Elo, concurrency);
 
   if (save_count) {
     for (const auto &pair : fen_map) {
