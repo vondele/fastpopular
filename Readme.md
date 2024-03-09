@@ -39,6 +39,7 @@ Options:
   --omitMoveCounter     Omit movecounter when storing the FEN (the same position with different movecounters is still only stored once)
   --TBlimit <N>         Omit positions with N pieces, or fewer (default: 1)
   --omitMates           Omit positions without a legal move (check/stale mates)
+  --minElo <N>          Omit games where WhiteElo or BlackElo < minElo (default: 0)
   --cdb                 Shorthand for --TBlimit 7 --omitMates
   -o <path>             Path to output epd file (default: popular.epd)
   --help                Print this help message
