@@ -157,7 +157,7 @@ public:
 
     m = uci::parseSan(board, move, moves);
 
-    board.makeMove<true>(m);
+    board.makeMove(m);
 
     if (tb_limit > 1) {
       unsigned int piece_count = board.occ().count();
