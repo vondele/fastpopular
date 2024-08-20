@@ -10,13 +10,6 @@
 
 #include "external/json.hpp"
 
-enum class Result { WIN = 'W', DRAW = 'D', LOSS = 'L' };
-
-struct ResultKey {
-  Result white;
-  Result black;
-};
-
 struct TestMetaData {
   std::optional<std::string> book;
   std::optional<bool> sprt;

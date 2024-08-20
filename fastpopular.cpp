@@ -90,10 +90,6 @@ public:
       board.set960(true);
     }
 
-    if (key == "Result") {
-      hasResult = true;
-    }
-
     if (key == "White") {
       white = value;
     }
@@ -111,11 +107,6 @@ public:
   }
 
   void startMoves() override {
-    if (!hasResult) {
-      this->skipPgn(true);
-      return;
-    }
-
     if (whiteElo < min_Elo || blackElo < min_Elo) {
       this->skipPgn(true);
       return;
@@ -217,8 +208,6 @@ public:
     board.set960(false);
     board.setFen(constants::STARTPOS);
 
-    hasResult = false;
-
     retained_plies = 0;
     new_entry_count = 0;
 
@@ -248,8 +237,6 @@ private:
   Movelist moves;
 
   bool skip = false;
-
-  bool hasResult = false;
 
   bool do_filter = false;
   Color filter_side = Color::NONE;
