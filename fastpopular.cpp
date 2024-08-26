@@ -24,20 +24,23 @@ using json = nlohmann::json;
 
 using namespace chess;
 
-// unordered map to count zobrist keys
-using zobrist_map_t = phmap::parallel_flat_hash_map<
-    std::uint64_t, std::uint64_t, std::hash<std::uint64_t>,
-    std::equal_to<std::uint64_t>,
-    std::allocator<std::pair<const std::uint64_t, std::uint64_t>>, 8,
-    std::mutex>;
+using PackedBoard = std::array<std::uint8_t, 24>;
 
-zobrist_map_t zobrist_map;
+namespace std {
+template <> struct hash<PackedBoard> {
+  size_t operator()(const PackedBoard pbfen) const {
+    std::string_view sv(reinterpret_cast<const char *>(pbfen.data()),
+                        pbfen.size());
+    return std::hash<std::string_view>{}(sv);
+  }
+};
+} // namespace std
 
-// unordered map from zobrist keys to fen strings
+// unordered map to count positions (using compressed format)
 using fen_map_t = phmap::parallel_flat_hash_map<
-    std::uint64_t, std::string, std::hash<std::uint64_t>,
-    std::equal_to<std::uint64_t>,
-    std::allocator<std::pair<const std::uint64_t, std::string>>, 8, std::mutex>;
+    PackedBoard, std::uint64_t, std::hash<PackedBoard>,
+    std::equal_to<PackedBoard>,
+    std::allocator<std::pair<PackedBoard, std::uint64_t>>, 8, std::mutex>;
 
 fen_map_t fen_map;
 
@@ -179,14 +182,13 @@ public:
 
     if (!do_filter || filter_side == board.sideToMove())
       if (comment != "book") {
-        // std::string fen = board.getFen(false);
-        std::uint64_t key = board.hash();
+        auto key = Board::Compact::encode(board);
         std::uint64_t value;
 
-        bool is_new_entry = zobrist_map.lazy_emplace_l(
+        bool is_new_entry = fen_map.lazy_emplace_l(
             std::move(key),
-            [&](zobrist_map_t::value_type &p) { value = ++p.second; },
-            [&](const zobrist_map_t::constructor &ctor) {
+            [&](fen_map_t::value_type &p) { value = ++p.second; },
+            [&](const fen_map_t::constructor &ctor) {
               ctor(std::move(key), 1);
               value = 1;
             });
@@ -194,9 +196,7 @@ public:
         if (value == std::uint64_t(min_count)) {
           total_pos++;
           std::string fen = board.getFen(!omit_move_counter);
-          if (save_count) {
-            fen_map.insert(std::pair(key, fen));
-          } else {
+          if (!save_count) {
             const std::lock_guard<std::mutex> lock(progress_output);
             out_file << fen << "\n";
           }
@@ -497,8 +497,8 @@ void print_usage(char const *program_name) {
     ss << "  --maxPlies <N>        Maximum number of plies to consider from the game, excluding book moves (default 20)" << "\n";
     ss << "  --stopEarly           Stop analysing the game as soon as countStopEarly new positions are reached (default false) for the analysing thread." << "\n";
     ss << "  --countStopEarly <N>  Number of new positions encountered before stopping with stopEarly (default 1)" << "\n";
-    ss << "  --minCount <N>        Minimum count of the positin before being written to file (default 1)" << "\n";
-    ss << "  --saveCount           Add to the output file the count of each position. This adds significant memory overhead (but can be faster)." << "\n";
+    ss << "  --minCount <N>        Minimum count of the position before being written to file (default 1)" << "\n";
+    ss << "  --saveCount           Add to the output file the count of each position. (Only works with --omitMoveCounter)." << "\n";
     ss << "  --omitMoveCounter     Omit movecounter when storing the FEN (the same position with different movecounters is still only stored once)" << "\n";
     ss << "  --TBlimit <N>         Omit positions with N pieces, or fewer (default: 1)" << "\n";
     ss << "  --omitMates           Omit positions without a legal move (check/stale mates)" << "\n";
@@ -564,7 +564,6 @@ int main(int argc, char const *argv[]) {
     }
   }
 
-  bool omit_move_counter = find_argument(args, pos, "--omitMoveCounter", true);
   bool allow_duplicates = find_argument(args, pos, "--allowDuplicates", true);
   unsigned int tb_limit = 1;
   bool omit_mates = false;
@@ -611,7 +610,14 @@ int main(int argc, char const *argv[]) {
   if (!stop_early)
     count_stop_early = std::numeric_limits<decltype(count_stop_early)>::max();
 
+  bool omit_move_counter = find_argument(args, pos, "--omitMoveCounter", true);
   bool save_count = find_argument(args, pos, "--saveCount", true);
+  if (save_count && !omit_move_counter) {
+    std::cout
+        << "The option --saveCount is only available with --omitMoveCounter."
+        << std::endl;
+    std::exit(1);
+  }
 
   if (find_argument(args, pos, "--minCount")) {
     min_count = std::stoi(*std::next(pos));
@@ -637,19 +643,19 @@ int main(int argc, char const *argv[]) {
 
   if (save_count) {
     for (const auto &pair : fen_map) {
-      out_file << pair.second << " ; c0 " << zobrist_map[pair.first] << "\n";
+      if (pair.second < min_count)
+        continue;
+      auto board = Board::Compact::decode(pair.first);
+      std::string fen = board.getFen(false);
+      out_file << fen << " ; c0 " << pair.second << "\n";
     }
-  } else {
-    // TODO ? in principle one could read the file of written positions, compute
-    // the hash, obtain the count from the zobrist_map and rewrite the file.
   }
-
   out_file.close();
 
   const auto t1 = std::chrono::high_resolution_clock::now();
 
   std::cout << "\nRetained " << total_pos << " positions from "
-            << zobrist_map.size() << " unique visited in " << total_games
+            << fen_map.size() << " unique visited in " << total_games
             << " games."
             << "\nTotal time for processing: "
             << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0)
