@@ -157,6 +157,12 @@ public:
 
     m = uci::parseSan(board, move, moves);
 
+    // chess-lib may call move() with empty strings for move
+    if (m == Move::NO_MOVE) {
+      this->skipPgn(true);
+      return;
+    }
+
     board.makeMove<true>(m);
 
     if (tb_limit > 1) {
