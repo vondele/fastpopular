@@ -35,7 +35,7 @@ Options:
   --stopEarly           Stop analysing the game as soon as countStopEarly new positions are reached (default false) for the analysing thread.
   --countStopEarly <N>  Number of new positions encountered before stopping with stopEarly (default 1)
   --minCount <N>        Minimum count of the positin before being written to file (default 1)
-  --saveCount           Add to the output file the count of each position. This adds significant memory overhead (but can be faster).
+  --saveCount           Add to the output file the count of each position. This adds significant memory overhead (but can be faster). Requires --omitMoveCounter.
   --omitMoveCounter     Omit movecounter when storing the FEN (the same position with different movecounters is still only stored once)
   --TBlimit <N>         Omit positions with N pieces, or fewer (default: 1)
   --omitMates           Omit positions without a legal move (check/stale mates)
