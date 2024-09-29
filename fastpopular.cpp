@@ -103,10 +103,10 @@ public:
     }
 
     if (key == "WhiteElo") {
-      whiteElo = std::atoi(value.data());
+      whiteElo = std::stoi(std::string(value));
     }
     if (key == "BlackElo") {
-      blackElo = std::atoi(value.data());
+      blackElo = std::stoi(std::string(value));
     }
   }
 
