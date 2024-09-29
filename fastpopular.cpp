@@ -33,11 +33,11 @@ using zobrist_map_t = phmap::parallel_flat_hash_map<
 
 zobrist_map_t zobrist_map;
 
-// unordered map from zobrist keys to fen strings
+// unordered map from zobrist keys to (packed) fen strings
 using fen_map_t = phmap::parallel_flat_hash_map<
-    std::uint64_t, std::string, std::hash<std::uint64_t>,
+    std::uint64_t, PackedBoard, std::hash<std::uint64_t>,
     std::equal_to<std::uint64_t>,
-    std::allocator<std::pair<const std::uint64_t, std::string>>, 8, std::mutex>;
+    std::allocator<std::pair<const std::uint64_t, PackedBoard>>, 8, std::mutex>;
 
 fen_map_t fen_map;
 
@@ -199,10 +199,11 @@ public:
 
         if (value == std::uint64_t(min_count)) {
           total_pos++;
-          std::string fen = board.getFen(!omit_move_counter);
           if (save_count) {
+            PackedBoard fen = Board::Compact::encode(board);
             fen_map.insert(std::pair(key, fen));
           } else {
+            std::string fen = board.getFen(!omit_move_counter);
             const std::lock_guard<std::mutex> lock(progress_output);
             out_file << fen << "\n";
           }
@@ -504,7 +505,7 @@ void print_usage(char const *program_name) {
     ss << "  --stopEarly           Stop analysing the game as soon as countStopEarly new positions are reached (default false) for the analysing thread." << "\n";
     ss << "  --countStopEarly <N>  Number of new positions encountered before stopping with stopEarly (default 1)" << "\n";
     ss << "  --minCount <N>        Minimum count of the positin before being written to file (default 1)" << "\n";
-    ss << "  --saveCount           Add to the output file the count of each position. This adds significant memory overhead (but can be faster)." << "\n";
+    ss << "  --saveCount           Add to the output file the count of each position. This adds significant memory overhead (but can be faster). Requires --omitMoveCounter." << "\n";
     ss << "  --omitMoveCounter     Omit movecounter when storing the FEN (the same position with different movecounters is still only stored once)" << "\n";
     ss << "  --TBlimit <N>         Omit positions with N pieces, or fewer (default: 1)" << "\n";
     ss << "  --omitMates           Omit positions without a legal move (check/stale mates)" << "\n";
@@ -633,6 +634,11 @@ int main(int argc, char const *argv[]) {
     filename = *std::next(pos);
   }
 
+  if (!omit_move_counter && save_count) {
+    std::cerr << "--saveCount requires --omitMoveCounter" << std::endl;
+    return 1;
+  }
+
   std::ofstream out_file(filename);
 
   const auto t0 = std::chrono::high_resolution_clock::now();
@@ -643,7 +649,8 @@ int main(int argc, char const *argv[]) {
 
   if (save_count) {
     for (const auto &pair : fen_map) {
-      out_file << pair.second << " ; c0 " << zobrist_map[pair.first] << "\n";
+      out_file << Board::Compact::decode(pair.second).getFen(false) << " ; c0 "
+               << zobrist_map[pair.first] << "\n";
     }
   } else {
     // TODO ? in principle one could read the file of written positions, compute
