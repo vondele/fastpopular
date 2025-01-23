@@ -57,12 +57,13 @@ static constexpr int map_size = 1200000;
 /// filter if present
 class Analyze : public pgn::Visitor {
 public:
-  Analyze(const std::string &regex_engine, const std::string &move_counter,
-          const unsigned int count_stop_early, const int max_plies,
-          std::ofstream &out_file, const int min_count, const bool save_count,
-          const bool omit_move_counter, const unsigned int tb_limit,
-          const bool omit_mates, const int min_Elo, std::mutex &progress_output)
-      : regex_engine(regex_engine), move_counter(move_counter),
+  Analyze(std::string_view file, const std::string &regex_engine,
+          const std::string &move_counter, const unsigned int count_stop_early,
+          const int max_plies, std::ofstream &out_file, const int min_count,
+          const bool save_count, const bool omit_move_counter,
+          const unsigned int tb_limit, const bool omit_mates, const int min_Elo,
+          std::mutex &progress_output)
+      : file(file), regex_engine(regex_engine), move_counter(move_counter),
         count_stop_early(count_stop_early), max_plies(max_plies),
         out_file(out_file), min_count(min_count), save_count(save_count),
         omit_move_counter(omit_move_counter), tb_limit(tb_limit),
@@ -153,17 +154,21 @@ public:
       return;
     }
 
-    Move m;
+    try {
+      Move m = uci::parseSan(board, move, moves);
 
-    m = uci::parseSan(board, move, moves);
+      // chess-lib may call move() with empty strings for move
+      if (m == Move::NO_MOVE) {
+        this->skipPgn(true);
+        return;
+      }
 
-    // chess-lib may call move() with empty strings for move
-    if (m == Move::NO_MOVE) {
+      board.makeMove<true>(m);
+    } catch (const uci::AmbiguousMoveError &e) {
+      std::cerr << "While parsing " << file << " encountered: " << e.what()
+                << '\n';
       this->skipPgn(true);
-      return;
     }
-
-    board.makeMove<true>(m);
 
     if (tb_limit > 1) {
       unsigned int piece_count = board.occ().count();
@@ -238,6 +243,7 @@ public:
   }
 
 private:
+  std::string_view file;
   const std::string &regex_engine;
   const std::string &move_counter;
   const unsigned int count_stop_early;
@@ -316,9 +322,9 @@ void ana_files(const std::vector<std::string> &files,
 
     const auto pgn_iterator = [&](std::istream &iss) {
       auto vis = std::make_unique<Analyze>(
-          regex_engine, move_counter, count_stop_early, max_plies, out_file,
-          min_count, save_count, omit_move_counter, tb_limit, omit_mates,
-          min_Elo, progress_output);
+          file, regex_engine, move_counter, count_stop_early, max_plies,
+          out_file, min_count, save_count, omit_move_counter, tb_limit,
+          omit_mates, min_Elo, progress_output);
 
       pgn::StreamParser parser(iss);
 
