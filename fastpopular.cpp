@@ -552,6 +552,10 @@ int main(int argc, char const *argv[]) {
 
   if (find_argument(args, pos, "--file")) {
     files_pgn = {*std::next(pos)};
+    if (!fs::exists(files_pgn[0])) {
+      std::cout << "Error: File not found: " << files_pgn[0] << std::endl;
+      std::exit(1);
+    }
   } else {
     std::string path = "./pgns";
 
