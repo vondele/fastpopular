@@ -104,10 +104,18 @@ public:
     }
 
     if (key == "WhiteElo") {
-      whiteElo = std::stoi(std::string(value));
+      try {
+        whiteElo = std::stoi(std::string(value));
+      } catch (const std::exception &e) {
+        whiteElo = 0;
+      }
     }
     if (key == "BlackElo") {
-      blackElo = std::stoi(std::string(value));
+      try {
+        blackElo = std::stoi(std::string(value));
+      } catch (const std::exception &e) {
+        blackElo = 0;
+      }
     }
   }
 
