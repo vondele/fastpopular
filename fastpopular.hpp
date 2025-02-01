@@ -104,7 +104,7 @@ get_files(const std::string &path, bool recursive = false) {
     if (std::filesystem::is_regular_file(entry)) {
       std::string stem = entry.path().stem().string();
       std::string extension = entry.path().extension().string();
-      if (extension == ".gz") {
+      if (extension == ".gz" || extension == ".zst") {
         if (stem.size() >= 4 && stem.substr(stem.size() - 4) == ".pgn") {
           files.push_back(entry.path().string());
         }
