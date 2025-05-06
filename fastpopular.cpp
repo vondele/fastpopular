@@ -172,7 +172,7 @@ public:
       }
 
       board.makeMove<true>(m);
-    } catch (std::exception &e) {
+    } catch (const std::exception &e) {
       std::cerr << "While parsing " << file << " encountered: " << e.what()
                 << '\n';
       this->skipPgn(true);
