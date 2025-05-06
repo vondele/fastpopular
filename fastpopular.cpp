@@ -172,10 +172,11 @@ public:
       }
 
       board.makeMove<true>(m);
-    } catch (const uci::AmbiguousMoveError &e) {
+    } catch (std::exception &e) {
       std::cerr << "While parsing " << file << " encountered: " << e.what()
                 << '\n';
       this->skipPgn(true);
+      return;
     }
 
     if (tb_limit > 1) {
