@@ -44,6 +44,14 @@ fen_map_t fen_map;
 // map to collect metadata for tests
 using map_meta = std::unordered_map<std::string, TestMetaData>;
 
+// set to store ignored chess variants
+using variant_set_t =
+    phmap::parallel_flat_hash_set<std::string, std::hash<std::string>,
+                                  std::equal_to<std::string>,
+                                  std::allocator<std::string>, 8, std::mutex>;
+
+variant_set_t variant_set;
+
 std::atomic<std::size_t> total_files = 0;
 std::atomic<std::size_t> total_games = 0;
 std::atomic<std::size_t> total_pos = 0;
@@ -101,7 +109,7 @@ public:
       } else if (variant == "standard") { // TODO: check FEN
       } else {
         skip = true; // variants like antichess, atomic, crazyhouse, etc
-        // TODO: collect set of rejected variants, to display to user at the end
+        variant_set.insert(variant);
       }
     }
 
@@ -701,12 +709,17 @@ int main(int argc, char const *argv[]) {
 
   std::cout << "\nRetained " << total_pos << " positions from "
             << zobrist_map.size() << " unique visited in " << total_games
-            << " games."
-            << "\nTotal time for processing: "
+            << " games.\nTotal time for processing: "
             << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0)
                        .count() /
                    1000.0
             << " s" << std::endl;
+
+  if (variant_set.size()) {
+    std::cout << "The following unknown chess variants have been ignored:";
+    variant_set.for_each([](const std::string &s) { std::cout << " " << s; });
+    std::cout << std::endl;
+  }
 
   return 0;
 }
