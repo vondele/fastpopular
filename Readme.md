@@ -21,9 +21,10 @@ The analysis runs multi-threaded, typically limited by the speed of the storage.
 ```
 Usage: ./fastpopular [options]
 Options:
-  --file <path>         Path to .pgn(.gz) file
-  --dir <path>          Path to directory containing .pgn(.gz) files (default: pgns)
-  -r                    Search for .pgn(.gz) files recursively in subdirectories
+  --file <path>         Path to .pgn([.gz|.zst]) file
+  --dir <path>          Path to directory containing .pgn([.gz|.zst]) files (default: pgns)
+  -r                    Search for .pgn([.gz|.zst]) files recursively in subdirectories
+  --noFRC               Exclude (D)FRC games (included by default)
   --allowDuplicates     Allow duplicate directories for test pgns
   --concurrency <N>     Number of concurrent threads to use (default: maximum)
   --matchEngine <regex> Filter data based on engine name

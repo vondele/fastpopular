@@ -44,6 +44,14 @@ fen_map_t fen_map;
 // map to collect metadata for tests
 using map_meta = std::unordered_map<std::string, TestMetaData>;
 
+// set to store ignored chess variants
+using variant_set_t =
+    phmap::parallel_flat_hash_set<std::string, std::hash<std::string>,
+                                  std::equal_to<std::string>,
+                                  std::allocator<std::string>, 8, std::mutex>;
+
+variant_set_t variant_set;
+
 std::atomic<std::size_t> total_files = 0;
 std::atomic<std::size_t> total_games = 0;
 std::atomic<std::size_t> total_pos = 0;
@@ -57,17 +65,17 @@ static constexpr int map_size = 1200000;
 /// filter if present
 class Analyze : public pgn::Visitor {
 public:
-  Analyze(std::string_view file, const std::string &regex_engine,
-          const std::string &move_counter, const unsigned int count_stop_early,
-          const int max_plies, std::ofstream &out_file, const int min_count,
-          const bool save_count, const bool omit_move_counter,
-          const unsigned int tb_limit, const bool omit_mates, const int min_Elo,
-          std::mutex &progress_output)
-      : file(file), regex_engine(regex_engine), move_counter(move_counter),
-        count_stop_early(count_stop_early), max_plies(max_plies),
-        out_file(out_file), min_count(min_count), save_count(save_count),
-        omit_move_counter(omit_move_counter), tb_limit(tb_limit),
-        omit_mates(omit_mates), min_Elo(min_Elo),
+  Analyze(std::string_view file, const bool no_frc,
+          const std::string &regex_engine, const std::string &move_counter,
+          const unsigned int count_stop_early, const int max_plies,
+          std::ofstream &out_file, const int min_count, const bool save_count,
+          const bool omit_move_counter, const unsigned int tb_limit,
+          const bool omit_mates, const int min_Elo, std::mutex &progress_output)
+      : file(file), no_frc(no_frc), regex_engine(regex_engine),
+        move_counter(move_counter), count_stop_early(count_stop_early),
+        max_plies(max_plies), out_file(out_file), min_count(min_count),
+        save_count(save_count), omit_move_counter(omit_move_counter),
+        tb_limit(tb_limit), omit_mates(omit_mates), min_Elo(min_Elo),
         progress_output(progress_output) {}
 
   virtual ~Analyze() {}
@@ -87,8 +95,22 @@ public:
       }
     }
 
-    if (key == "Variant" && value == "fischerandom") {
-      board.set960(true);
+    if (key == "Variant") {
+      std::string variant = to_lower(value);
+      if (variant == "chess960" || variant == "chess 960" ||
+          variant == "fischerandom" // cutechess
+          || variant == "fischerrandom" || variant == "fischer random" ||
+          variant == "from position" // lichess broadcast, TODO: check FEN
+      ) {
+        if (no_frc)
+          skip = true;
+        else
+          board.set960(true);
+      } else if (variant == "standard") { // TODO: check FEN
+      } else {
+        skip = true; // variants like antichess, atomic, crazyhouse, etc
+        variant_set.insert(variant);
+      }
     }
 
     if (key == "Result") {
@@ -120,7 +142,7 @@ public:
   }
 
   void startMoves() override {
-    if (!hasResult) {
+    if (skip || !hasResult) {
       this->skipPgn(true);
       return;
     }
@@ -238,7 +260,7 @@ public:
     board.set960(false);
     board.setFen(constants::STARTPOS);
 
-    hasResult = false;
+    skip = hasResult = false;
 
     retained_plies = 0;
     new_entry_count = 0;
@@ -253,6 +275,7 @@ public:
 
 private:
   std::string_view file;
+  const bool no_frc;
   const std::string &regex_engine;
   const std::string &move_counter;
   const unsigned int count_stop_early;
@@ -285,7 +308,7 @@ private:
   unsigned int new_entry_count = 0;
 };
 
-void ana_files(const std::vector<std::string> &files,
+void ana_files(const std::vector<std::string> &files, bool no_frc,
                const std::string &regex_engine, const map_meta &meta_map,
                bool fix_fens, const int max_plies,
                const unsigned int count_stop_early, std::ofstream &out_file,
@@ -331,7 +354,7 @@ void ana_files(const std::vector<std::string> &files,
 
     const auto pgn_iterator = [&](std::istream &iss) {
       auto vis = std::make_unique<Analyze>(
-          file, regex_engine, move_counter, count_stop_early, max_plies,
+          file, no_frc, regex_engine, move_counter, count_stop_early, max_plies,
           out_file, min_count, save_count, omit_move_counter, tb_limit,
           omit_mates, min_Elo, progress_output);
 
@@ -463,7 +486,7 @@ void filter_files_sprt(std::vector<std::string> &file_list,
                   file_list.end());
 }
 
-void process(const std::vector<std::string> &files_pgn,
+void process(const std::vector<std::string> &files_pgn, bool no_frc,
              const std::string &regex_engine, const map_meta &meta_map,
              bool fix_fens, const int max_plies,
              const unsigned int count_stop_early, std::ofstream &out_file,
@@ -487,14 +510,14 @@ void process(const std::vector<std::string> &files_pgn,
 
   for (const auto &files : files_chunked) {
 
-    pool.enqueue([&files, &regex_engine, &meta_map, &fix_fens, &progress_output,
-                  &files_chunked, &max_plies, &count_stop_early, &out_file,
-                  &min_count, &save_count, omit_move_counter, &tb_limit,
-                  &omit_mates, &min_Elo]() {
-      analysis::ana_files(files, regex_engine, meta_map, fix_fens, max_plies,
-                          count_stop_early, out_file, min_count, save_count,
-                          omit_move_counter, tb_limit, omit_mates, min_Elo,
-                          progress_output);
+    pool.enqueue([&files, no_frc, &regex_engine, &meta_map, &fix_fens,
+                  &progress_output, &files_chunked, &max_plies,
+                  &count_stop_early, &out_file, &min_count, &save_count,
+                  omit_move_counter, &tb_limit, &omit_mates, &min_Elo]() {
+      analysis::ana_files(files, no_frc, regex_engine, meta_map, fix_fens,
+                          max_plies, count_stop_early, out_file, min_count,
+                          save_count, omit_move_counter, tb_limit, omit_mates,
+                          min_Elo, progress_output);
     });
   }
 
@@ -511,6 +534,7 @@ void print_usage(char const *program_name) {
     ss << "  --file <path>         Path to .pgn([.gz|.zst]) file" << "\n";
     ss << "  --dir <path>          Path to directory containing .pgn([.gz|.zst]) files (default: pgns)" << "\n";
     ss << "  -r                    Search for .pgn([.gz|.zst]) files recursively in subdirectories" << "\n";
+    ss << "  --noFRC               Exclude (D)FRC games (included by default)" << "\n";
     ss << "  --allowDuplicates     Allow duplicate directories for test pgns" << "\n";
     ss << "  --concurrency <N>     Number of concurrent threads to use (default: maximum)" << "\n";
     ss << "  --matchEngine <regex> Filter data based on engine name" << "\n";
@@ -521,7 +545,7 @@ void print_usage(char const *program_name) {
     ss << "  --maxPlies <N>        Maximum number of plies to consider from the game, excluding book moves (default 20)" << "\n";
     ss << "  --stopEarly           Stop analysing the game as soon as countStopEarly new positions are reached (default false) for the analysing thread." << "\n";
     ss << "  --countStopEarly <N>  Number of new positions encountered before stopping with stopEarly (default 1)" << "\n";
-    ss << "  --minCount <N>        Minimum count of the positin before being written to file (default 1)" << "\n";
+    ss << "  --minCount <N>        Minimum count of the position before being written to file (default 1)" << "\n";
     ss << "  --saveCount           Add to the output file the count of each position. This adds significant memory overhead (but can be faster). Requires --omitMoveCounter." << "\n";
     ss << "  --omitMoveCounter     Omit movecounter when storing the FEN (the same position with different movecounters is still only stored once)" << "\n";
     ss << "  --TBlimit <N>         Omit positions with N pieces, or fewer (default: 1)" << "\n";
@@ -592,6 +616,7 @@ int main(int argc, char const *argv[]) {
     }
   }
 
+  bool no_frc = find_argument(args, pos, "--noFRC", true);
   bool omit_move_counter = find_argument(args, pos, "--omitMoveCounter", true);
   bool allow_duplicates = find_argument(args, pos, "--allowDuplicates", true);
   unsigned int tb_limit = 1;
@@ -664,7 +689,7 @@ int main(int argc, char const *argv[]) {
 
   const auto t0 = std::chrono::high_resolution_clock::now();
 
-  process(files_pgn, regex_engine, meta_map, fix_fens, max_plies,
+  process(files_pgn, no_frc, regex_engine, meta_map, fix_fens, max_plies,
           count_stop_early, out_file, min_count, save_count, omit_move_counter,
           tb_limit, omit_mates, min_Elo, concurrency);
 
@@ -684,12 +709,17 @@ int main(int argc, char const *argv[]) {
 
   std::cout << "\nRetained " << total_pos << " positions from "
             << zobrist_map.size() << " unique visited in " << total_games
-            << " games."
-            << "\nTotal time for processing: "
+            << " games.\nTotal time for processing: "
             << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0)
                        .count() /
                    1000.0
             << " s" << std::endl;
+
+  if (variant_set.size()) {
+    std::cout << "The following unknown chess variants have been ignored:";
+    variant_set.for_each([](const std::string &s) { std::cout << " " << s; });
+    std::cout << std::endl;
+  }
 
   return 0;
 }

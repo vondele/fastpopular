@@ -153,3 +153,10 @@ inline bool find_argument(const std::vector<std::string> &args,
   return pos != args.end() &&
          (without_parameter || std::next(pos) != args.end());
 }
+
+inline std::string to_lower(std::string_view s) {
+  std::string result(s);
+  std::transform(result.begin(), result.end(), result.begin(),
+                 [](unsigned char c) { return std::tolower(c); });
+  return result;
+}
