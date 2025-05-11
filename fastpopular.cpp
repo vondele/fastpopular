@@ -56,6 +56,33 @@ std::atomic<std::size_t> total_files = 0;
 std::atomic<std::size_t> total_games = 0;
 std::atomic<std::size_t> total_pos = 0;
 
+bool has_chess960_castling_rights(std::string_view fen) {
+  Board board;
+  board.set960(true);
+  board.setFen(fen);
+
+  const Board::CastlingRights &rights = board.castlingRights();
+  for (Color c : {Color::WHITE, Color::BLACK}) {
+    if (rights.has(c)) {
+      Rank rank = (c == Color::WHITE) ? Rank::RANK_1 : Rank::RANK_8;
+      if (board.kingSq(c) != Square(File::FILE_E, rank)) {
+        return true;
+      }
+      if (rights.has(c, Board::CastlingRights::Side::KING_SIDE) &&
+          rights.getRookFile(c, Board::CastlingRights::Side::KING_SIDE) !=
+              File::FILE_H) {
+        return true;
+      }
+      if (rights.has(c, Board::CastlingRights::Side::QUEEN_SIDE) &&
+          rights.getRookFile(c, Board::CastlingRights::Side::QUEEN_SIDE) !=
+              File::FILE_A) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 namespace analysis {
 
 /// @brief Magic value for fishtest pgns, ~1.2 million keys
@@ -85,13 +112,9 @@ public:
   void header(std::string_view key, std::string_view value) override {
 
     if (key == "FEN") {
-      std::regex p("0 1$");
-
-      // revert change by cutechess-cli of move counters in .epd books to "0 1"
-      if (!move_counter.empty() && std::regex_search(value.data(), p)) {
-        board.setFen(std::regex_replace(value.data(), p, "0 " + move_counter));
-      } else {
-        board.setFen(value);
+      fen = value;
+      if (has_chess960_castling_rights(fen)) {
+        is960 = true;
       }
     }
 
@@ -99,14 +122,9 @@ public:
       std::string variant = to_lower(value);
       if (variant == "chess960" || variant == "chess 960" ||
           variant == "fischerandom" // cutechess
-          || variant == "fischerrandom" || variant == "fischer random" ||
-          variant == "from position" // lichess broadcast, TODO: check FEN
-      ) {
-        if (no_frc)
-          skip = true;
-        else
-          board.set960(true);
-      } else if (variant == "standard") { // TODO: check FEN
+          || variant == "fischerrandom" || variant == "fischer random") {
+        is960 = true;
+      } else if (variant == "standard" || variant == "from position") {
       } else {
         skip = true; // variants like antichess, atomic, crazyhouse, etc
         variant_set.insert(variant);
@@ -142,9 +160,18 @@ public:
   }
 
   void startMoves() override {
-    if (skip || !hasResult) {
+    if (skip || (is960 && no_frc) || !hasResult) {
       this->skipPgn(true);
       return;
+    }
+
+    board.set960(is960);
+    std::regex p("0 1$");
+    // revert change by cutechess-cli of move counters in .epd books to "0 1"
+    if (!move_counter.empty() && std::regex_search(fen, p)) {
+      board.setFen(std::regex_replace(fen, p, "0 " + move_counter));
+    } else {
+      board.setFen(fen);
     }
 
     if (whiteElo < min_Elo || blackElo < min_Elo) {
@@ -257,10 +284,9 @@ public:
   }
 
   void endPgn() override {
-    board.set960(false);
-    board.setFen(constants::STARTPOS);
+    fen = constants::STARTPOS;
 
-    skip = hasResult = false;
+    is960 = skip = hasResult = false;
 
     retained_plies = 0;
     new_entry_count = 0;
@@ -292,8 +318,9 @@ private:
   Board board;
   Movelist moves;
 
+  std::string fen;
+  bool is960 = false;
   bool skip = false;
-
   bool hasResult = false;
 
   bool do_filter = false;
