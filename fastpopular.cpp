@@ -318,7 +318,7 @@ private:
   Board board;
   Movelist moves;
 
-  std::string fen;
+  std::string fen = constants::STARTPOS;
   bool is960 = false;
   bool skip = false;
   bool hasResult = false;
