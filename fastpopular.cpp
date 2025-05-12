@@ -59,7 +59,10 @@ std::atomic<std::size_t> total_pos = 0;
 bool has_chess960_castling_rights(std::string_view fen) {
   Board board;
   board.set960(true);
-  board.setFen(fen);
+  if (!board.setFen(fen)) {
+    std::cout << "Error: Failed to parse FEN " << fen << std::endl;
+    std::exit(1);
+  }
 
   const Board::CastlingRights &rights = board.castlingRights();
   for (Color c : {Color::WHITE, Color::BLACK}) {
@@ -168,10 +171,11 @@ public:
     board.set960(is960);
     std::regex p("0 1$");
     // revert change by cutechess-cli of move counters in .epd books to "0 1"
-    if (!move_counter.empty() && std::regex_search(fen, p)) {
-      board.setFen(std::regex_replace(fen, p, "0 " + move_counter));
-    } else {
-      board.setFen(fen);
+    if (!board.setFen((!move_counter.empty() && std::regex_search(fen, p))
+                          ? std::regex_replace(fen, p, "0 " + move_counter)
+                          : fen)) {
+      std::cout << "Error: Failed to parse FEN " << fen << std::endl;
+      std::exit(1);
     }
 
     if (whiteElo < min_Elo || blackElo < min_Elo) {
