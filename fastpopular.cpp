@@ -56,33 +56,67 @@ std::atomic<std::size_t> total_files = 0;
 std::atomic<std::size_t> total_games = 0;
 std::atomic<std::size_t> total_pos = 0;
 
-bool has_chess960_castling_rights(std::string_view fen) {
+bool has_chess960_castling_rights(std::string_view fen, bool &skip) {
+
+  // check for DFRC castling rights
+  const auto params = split_string_view<3>(fen);
+  const auto castling = params[2].has_value() ? *params[2] : "-";
+  for (char c : castling) {
+    if (c != '-' && std::tolower(c) != 'k' && std::tolower(c) != 'q') {
+      return true;
+    }
+  }
+
+  // check for castling rights with nonstandard king and rook placements
   Board board;
   board.set960(true);
   if (!board.setFen(fen)) {
-    std::cout << "Error: Failed to parse FEN " << fen << std::endl;
-    std::exit(1);
+    std::cout << "Warning: Failed to parse FEN " << fen << std::endl;
+    skip = true;
+    return false;
   }
 
   const Board::CastlingRights &rights = board.castlingRights();
+  int count_castling = 0;
   for (Color c : {Color::WHITE, Color::BLACK}) {
     if (rights.has(c)) {
       Rank rank = (c == Color::WHITE) ? Rank::RANK_1 : Rank::RANK_8;
       if (board.kingSq(c) != Square(File::FILE_E, rank)) {
         return true;
       }
-      if (rights.has(c, Board::CastlingRights::Side::KING_SIDE) &&
-          rights.getRookFile(c, Board::CastlingRights::Side::KING_SIDE) !=
-              File::FILE_H) {
-        return true;
+      if (rights.has(c, Board::CastlingRights::Side::KING_SIDE)) {
+        count_castling++;
+        if (rights.getRookFile(c, Board::CastlingRights::Side::KING_SIDE) !=
+            File::FILE_H) {
+          return true;
+        }
       }
-      if (rights.has(c, Board::CastlingRights::Side::QUEEN_SIDE) &&
-          rights.getRookFile(c, Board::CastlingRights::Side::QUEEN_SIDE) !=
-              File::FILE_A) {
-        return true;
+      if (rights.has(c, Board::CastlingRights::Side::QUEEN_SIDE)) {
+        count_castling++;
+        if (rights.getRookFile(c, Board::CastlingRights::Side::QUEEN_SIDE) !=
+            File::FILE_A) {
+          return true;
+        }
       }
     }
   }
+
+  // check for FRC start positions with standard king and rook placements
+  if (count_castling == 4) {
+    if (board.pieces(PieceType::PAWN) !=
+            (Bitboard(Rank::RANK_2) | Bitboard(Rank::RANK_7)) ||
+        (board.us(Color::WHITE) & Bitboard(Rank::RANK_1)).count() != 8 ||
+        (board.us(Color::BLACK) & Bitboard(Rank::RANK_8)).count() != 8) {
+      return false;
+    }
+
+    if (fen.length() >= 50 &&
+        fen.substr(0, 50) !=
+            std::string_view(constants::STARTPOS).substr(0, 50)) {
+      return true;
+    }
+  }
+
   return false;
 }
 
@@ -116,7 +150,7 @@ public:
 
     if (key == "FEN") {
       fen = value;
-      if (has_chess960_castling_rights(fen)) {
+      if (has_chess960_castling_rights(fen, skip)) {
         is960 = true;
       }
     }
@@ -174,11 +208,11 @@ public:
     if (!board.setFen((!move_counter.empty() && std::regex_search(fen, p))
                           ? std::regex_replace(fen, p, "0 " + move_counter)
                           : fen)) {
-      std::cout << "Error: Failed to parse FEN " << fen << std::endl;
-      std::exit(1);
+      std::cout << "Warning: Failed to parse FEN " << fen << std::endl;
+      skip = true;
     }
 
-    if (whiteElo < min_Elo || blackElo < min_Elo) {
+    if (skip || whiteElo < min_Elo || blackElo < min_Elo) {
       this->skipPgn(true);
       return;
     }
