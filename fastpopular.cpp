@@ -59,8 +59,8 @@ std::atomic<std::size_t> total_pos = 0;
 bool has_chess960_castling_rights(std::string_view fen, bool &skip) {
 
   // check for DFRC castling rights
-  const auto params = split_string_view<3>(fen);
-  const auto castling = params[2].has_value() ? *params[2] : "-";
+  const auto parts = utils::splitString(fen, ' ');
+  const auto castling = parts.size() > 2 ? parts[2] : "-";
   for (char c : castling) {
     if (c != '-' && std::tolower(c) != 'k' && std::tolower(c) != 'q') {
       return true;
@@ -105,8 +105,10 @@ bool has_chess960_castling_rights(std::string_view fen, bool &skip) {
   if (count_castling == 4) {
     if (board.pieces(PieceType::PAWN) !=
             (Bitboard(Rank::RANK_2) | Bitboard(Rank::RANK_7)) ||
-        (board.us(Color::WHITE) & Bitboard(Rank::RANK_1)).count() != 8 ||
-        (board.us(Color::BLACK) & Bitboard(Rank::RANK_8)).count() != 8) {
+        board.us(Color::WHITE) !=
+            (Bitboard(Rank::RANK_1) | Bitboard(Rank::RANK_2)) ||
+        board.us(Color::BLACK) !=
+            (Bitboard(Rank::RANK_7) | Bitboard(Rank::RANK_8))) {
       return false;
     }
 
