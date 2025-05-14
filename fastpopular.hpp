@@ -160,24 +160,3 @@ inline std::string to_lower(std::string_view s) {
                  [](unsigned char c) { return std::tolower(c); });
   return result;
 }
-
-template <int N>
-std::array<std::optional<std::string_view>, N> static split_string_view(
-    std::string_view fen, char delimiter = ' ') {
-  std::array<std::optional<std::string_view>, N> arr = {};
-
-  std::size_t start = 0;
-  std::size_t end = 0;
-
-  for (std::size_t i = 0; i < N; i++) {
-    end = fen.find(delimiter, start);
-    if (end == std::string::npos) {
-      arr[i] = fen.substr(start);
-      break;
-    }
-    arr[i] = fen.substr(start, end - start);
-    start = end + 1;
-  }
-
-  return arr;
-}
