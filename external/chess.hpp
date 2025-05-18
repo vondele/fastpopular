@@ -25,7 +25,7 @@ THIS FILE IS AUTO GENERATED DO NOT CHANGE MANUALLY.
 
 Source: https://github.com/Disservin/chess-library
 
-VERSION: 0.8.14
+VERSION: 0.8.16
 */
 
 #ifndef CHESS_HPP
@@ -2677,7 +2677,7 @@ class Board {
 
             while (fen[0] == ' ') fen.remove_prefix(1);
 
-            const auto params     = split_string_view<6>(fen);
+            const auto params     = split_string_view<4>(fen);
             const auto position   = params[0].has_value() ? *params[0] : "";
             const auto move_right = params[1].has_value() ? *params[1] : "w";
             const auto castling   = params[2].has_value() ? *params[2] : "-";
@@ -3334,7 +3334,7 @@ template <PieceType::underlying pt>
 
 template <bool ISROOK>
 [[nodiscard]] inline Bitboard attacks::sliderAttacks(Square sq, Bitboard occupied) noexcept {
-    static constexpr int dirs[2][4][2] = {{1, 1, 1, -1, -1, -1, -1, 1}, {1, 0, 0, -1, -1, 0, 0, 1}};
+    static constexpr int dirs[2][4][2] = {{{1, 1}, {1, -1}, {-1, -1}, {-1, 1}}, {{1, 0}, {0, -1}, {-1, 0}, {0, 1}}};
 
     Bitboard attacks = 0ull;
 
@@ -4337,7 +4337,7 @@ class StreamParser {
         while (auto c = stream_buffer.some()) {
             if (*c == ' ' || is_digit(*c)) {
                 stream_buffer.advance();
-            } else if (*c == '-' || *c == '*' || c == '/') {
+            } else if (*c == '-' || *c == '*' || *c == '/') {
                 is_termination_symbol = true;
                 stream_buffer.advance();
             } else if (*c == '{') {
@@ -4360,6 +4360,7 @@ class StreamParser {
                 if (!visitor->skip()) {
                     visitor->move("", comment);
 
+                    has_comment = false;
                     comment.clear();
                 }
             } else {
@@ -4368,7 +4369,7 @@ class StreamParser {
         }
 
         // we need to reparse the termination symbol
-        if (has_comment && !is_termination_symbol) {
+        if (!visitor->skip() && has_comment && !is_termination_symbol) {
             goto start;
         }
 
