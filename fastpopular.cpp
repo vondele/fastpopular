@@ -262,8 +262,8 @@ public:
 
       board.makeMove<true>(m);
     } catch (const std::exception &e) {
-      std::cerr << "While parsing " << file << " encountered: " << e.what()
-                << '\n';
+      std::cerr << "While parsing " << file << " with FEN = " << fen
+                << " encountered: " << e.what() << '\n';
       this->skipPgn(true);
       return;
     }
@@ -287,7 +287,7 @@ public:
     }
 
     if (!do_filter || filter_side == board.sideToMove())
-      if (comment != "book") {
+      if (comment != "book" && min_count) {
         // std::string fen = board.getFen(false);
         std::uint64_t key = board.hash();
         std::uint64_t value;
@@ -612,7 +612,7 @@ void print_usage(char const *program_name) {
     ss << "  --maxPlies <N>        Maximum number of plies to consider from the game, excluding book moves (default 20)" << "\n";
     ss << "  --stopEarly           Stop analysing the game as soon as countStopEarly new positions are reached (default false) for the analysing thread." << "\n";
     ss << "  --countStopEarly <N>  Number of new positions encountered before stopping with stopEarly (default 1)" << "\n";
-    ss << "  --minCount <N>        Minimum count of the position before being written to file (default 1)" << "\n";
+    ss << "  --minCount <N>        Minimum count of the position before being written to file (default 1). Use N=0 to simply parse the games, without writing positions to file." << "\n";
     ss << "  --saveCount           Add to the output file the count of each position. This adds significant memory overhead (but can be faster). Requires --omitMoveCounter." << "\n";
     ss << "  --omitMoveCounter     Omit movecounter when storing the FEN (the same position with different movecounters is still only stored once)" << "\n";
     ss << "  --TBlimit <N>         Omit positions with N pieces, or fewer (default: 1)" << "\n";
