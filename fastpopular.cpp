@@ -33,14 +33,6 @@ using zobrist_map_t = phmap::parallel_flat_hash_map<
 
 zobrist_map_t zobrist_map;
 
-// unordered map from zobrist keys to (packed) fen strings
-using fen_map_t = phmap::parallel_flat_hash_map<
-    std::uint64_t, PackedBoard, std::hash<std::uint64_t>,
-    std::equal_to<std::uint64_t>,
-    std::allocator<std::pair<const std::uint64_t, PackedBoard>>, 8, std::mutex>;
-
-fen_map_t fen_map;
-
 // map to collect metadata for tests
 using map_meta = std::unordered_map<std::string, TestMetaData>;
 
@@ -134,14 +126,14 @@ public:
   Analyze(std::string_view file, const bool no_frc,
           const std::string &regex_engine, const std::string &move_counter,
           const unsigned int count_stop_early, const int max_plies,
-          std::ofstream &out_file, const int min_count, const bool save_count,
+          std::ofstream &out_file, const int min_count,
           const bool omit_move_counter, const unsigned int tb_limit,
           const bool omit_mates, const int min_Elo, std::mutex &progress_output)
       : file(file), no_frc(no_frc), regex_engine(regex_engine),
         move_counter(move_counter), count_stop_early(count_stop_early),
         max_plies(max_plies), out_file(out_file), min_count(min_count),
-        save_count(save_count), omit_move_counter(omit_move_counter),
-        tb_limit(tb_limit), omit_mates(omit_mates), min_Elo(min_Elo),
+        omit_move_counter(omit_move_counter), tb_limit(tb_limit),
+        omit_mates(omit_mates), min_Elo(min_Elo),
         progress_output(progress_output) {}
 
   virtual ~Analyze() {}
@@ -302,14 +294,9 @@ public:
 
         if (value == std::uint64_t(min_count)) {
           total_pos++;
-          if (save_count) {
-            PackedBoard fen = Board::Compact::encode(board);
-            fen_map.insert(std::pair(key, fen));
-          } else {
-            std::string fen = board.getFen(!omit_move_counter);
-            const std::lock_guard<std::mutex> lock(progress_output);
-            out_file << fen << "\n";
-          }
+          std::string fen = board.getFen(!omit_move_counter);
+          const std::lock_guard<std::mutex> lock(progress_output);
+          out_file << fen << "\n";
         }
 
         if (is_new_entry)
@@ -348,7 +335,6 @@ private:
   const int max_plies;
   std::ofstream &out_file;
   const int min_count;
-  const bool save_count;
   const bool omit_move_counter;
   const unsigned int tb_limit;
   const bool omit_mates;
@@ -379,10 +365,9 @@ void ana_files(const std::vector<std::string> &files, bool no_frc,
                const std::string &regex_engine, const map_meta &meta_map,
                bool fix_fens, const int max_plies,
                const unsigned int count_stop_early, std::ofstream &out_file,
-               const int min_count, const bool save_count,
-               const bool omit_move_counter, const unsigned int tb_limit,
-               const bool omit_mates, const int min_Elo,
-               std::mutex &progress_output) {
+               const int min_count, const bool omit_move_counter,
+               const unsigned int tb_limit, const bool omit_mates,
+               const int min_Elo, std::mutex &progress_output) {
 
   for (const auto &file : files) {
     std::string move_counter;
@@ -422,8 +407,8 @@ void ana_files(const std::vector<std::string> &files, bool no_frc,
     const auto pgn_iterator = [&](std::istream &iss) {
       auto vis = std::make_unique<Analyze>(
           file, no_frc, regex_engine, move_counter, count_stop_early, max_plies,
-          out_file, min_count, save_count, omit_move_counter, tb_limit,
-          omit_mates, min_Elo, progress_output);
+          out_file, min_count, omit_move_counter, tb_limit, omit_mates, min_Elo,
+          progress_output);
 
       pgn::StreamParser parser(iss);
 
@@ -557,9 +542,9 @@ void process(const std::vector<std::string> &files_pgn, bool no_frc,
              const std::string &regex_engine, const map_meta &meta_map,
              bool fix_fens, const int max_plies,
              const unsigned int count_stop_early, std::ofstream &out_file,
-             const int min_count, const bool save_count,
-             const bool omit_move_counter, const unsigned int tb_limit,
-             const bool omit_mates, int min_Elo, int concurrency) {
+             const int min_count, const bool omit_move_counter,
+             const unsigned int tb_limit, const bool omit_mates, int min_Elo,
+             int concurrency) {
   // Create more chunks than threads to prevent threads from idling.
   int target_chunks = 4 * concurrency;
 
@@ -579,12 +564,12 @@ void process(const std::vector<std::string> &files_pgn, bool no_frc,
 
     pool.enqueue([&files, no_frc, &regex_engine, &meta_map, &fix_fens,
                   &progress_output, &files_chunked, &max_plies,
-                  &count_stop_early, &out_file, &min_count, &save_count,
-                  omit_move_counter, &tb_limit, &omit_mates, &min_Elo]() {
+                  &count_stop_early, &out_file, &min_count, omit_move_counter,
+                  &tb_limit, &omit_mates, &min_Elo]() {
       analysis::ana_files(files, no_frc, regex_engine, meta_map, fix_fens,
                           max_plies, count_stop_early, out_file, min_count,
-                          save_count, omit_move_counter, tb_limit, omit_mates,
-                          min_Elo, progress_output);
+                          omit_move_counter, tb_limit, omit_mates, min_Elo,
+                          progress_output);
     });
   }
 
@@ -613,13 +598,13 @@ void print_usage(char const *program_name) {
     ss << "  --stopEarly           Stop analysing the game as soon as countStopEarly new positions are reached (default false) for the analysing thread." << "\n";
     ss << "  --countStopEarly <N>  Number of new positions encountered before stopping with stopEarly (default 1)" << "\n";
     ss << "  --minCount <N>        Minimum count of the position before being written to file (default 1). Use N=0 to simply parse the games, without writing positions to file." << "\n";
-    ss << "  --saveCount           Add to the output file the count of each position. This adds significant memory overhead (but can be faster). Requires --omitMoveCounter." << "\n";
-    ss << "  --omitMoveCounter     Omit movecounter when storing the FEN (the same position with different movecounters is still only stored once)" << "\n";
+    ss << "  -o <path>             Path to output epd file (default: popular.epd)" << "\n";
+    ss << "  --omitMoveCounter     Omit movecounter when storing the FEN (the same position with different movecounters is in any case only stored once)" << "\n";
+    ss << "  --saveCount           Output the count of each stored position without movecounter in the file popular_sorted.epd." << "\n";
     ss << "  --TBlimit <N>         Omit positions with N pieces, or fewer (default: 1)" << "\n";
     ss << "  --omitMates           Omit positions without a legal move (check/stale mates)" << "\n";
     ss << "  --minElo <N>          Omit games where WhiteElo or BlackElo < minElo (default: 0)" << "\n";
     ss << "  --cdb                 Shorthand for --TBlimit 7 --omitMates" << "\n";
-    ss << "  -o <path>             Path to output epd file (default: popular.epd)" << "\n";
     ss << "  --help                Print this help message" << "\n";
   // clang-format on
 
@@ -747,28 +732,13 @@ int main(int argc, char const *argv[]) {
     filename = *std::next(pos);
   }
 
-  if (!omit_move_counter && save_count) {
-    std::cerr << "--saveCount requires --omitMoveCounter" << std::endl;
-    return 1;
-  }
-
   std::ofstream out_file(filename);
 
   const auto t0 = std::chrono::high_resolution_clock::now();
 
   process(files_pgn, no_frc, regex_engine, meta_map, fix_fens, max_plies,
-          count_stop_early, out_file, min_count, save_count, omit_move_counter,
-          tb_limit, omit_mates, min_Elo, concurrency);
-
-  if (save_count) {
-    for (const auto &pair : fen_map) {
-      out_file << Board::Compact::decode(pair.second).getFen(false) << " ; c0 "
-               << zobrist_map[pair.first] << "\n";
-    }
-  } else {
-    // TODO ? in principle one could read the file of written positions, compute
-    // the hash, obtain the count from the zobrist_map and rewrite the file.
-  }
+          count_stop_early, out_file, min_count, omit_move_counter, tb_limit,
+          omit_mates, min_Elo, concurrency);
 
   out_file.close();
 
@@ -776,7 +746,9 @@ int main(int argc, char const *argv[]) {
 
   std::cout << "\nRetained " << total_pos << " positions from "
             << zobrist_map.size() << " unique visited in " << total_games
-            << " games.\nTotal time for processing: "
+            << " games.\n";
+  std::cout << "Positions written to " << filename << ".\n";
+  std::cout << "Total time for processing: "
             << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0)
                        .count() /
                    1000.0
@@ -786,6 +758,35 @@ int main(int argc, char const *argv[]) {
     std::cout << "The following unknown chess variants have been ignored:";
     variant_set.for_each([](const std::string &s) { std::cout << " " << s; });
     std::cout << std::endl;
+  }
+
+  if (save_count) {
+    std::cout << "Obtaining counts and sorting ... " << std::flush;
+    std::ifstream file(filename);
+    std::vector<std::pair<std::uint64_t, std::string>> fens;
+    std::string line;
+    while (std::getline(file, line)) {
+      std::istringstream iss(line);
+      std::string fen, word;
+      int wordCount = 0;
+      while (iss >> word && wordCount < 4) {
+        if (wordCount > 0)
+          fen += " ";
+        fen += word;
+        wordCount++;
+      }
+      Board board(fen);
+      std::uint64_t key = board.hash();
+      fens.emplace_back(zobrist_map[key], std::move(fen));
+    }
+    file.close();
+    sort(fens.begin(), fens.end(), std::greater<>());
+    out_file.open("popular_sorted.epd");
+    for (const auto &pair : fens) {
+      out_file << pair.second << " ; c0 " << pair.first << "\n";
+    }
+    std::cout << "done. Saved counts to popular_sorted.epd." << std::endl;
+    out_file.close();
   }
 
   return 0;
