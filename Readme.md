@@ -5,12 +5,13 @@ Given a set of .pgn files (or .pgn.gz), quickly find the most commonly played po
 Example usage:
 
 ```
-$ ./fastpopular --dir download35 --minCount 8 --stopEarly --countStopEarly 6 --maxPlies 60 
-Looking for pgn files in download35
-Found 370353 .pgn(.gz) files, creating 128 chunks for processing.
-Processed 370353 files
-Retained 16619788 positions from 199330734 unique visited in 496063288 games.
-Total time for processing: 64.788 s
+$ ./fastpopular --dir pgns -r --minCount 8 --stopEarly --countStopEarly 6 --maxPlies 60
+Looking (recursively) for pgn files in pgns
+Found 830 .pgn([.gz|.zst]) files, creating 93 chunks for processing.
+Processed 830 files
+Retained 54671041 positions from 554007242 unique visited in 1981339655 visits in 92445853 games.
+Positions written to popular.epd.
+Total time for processing: 728.859 s
 ```
 
 This analyzes all games in the given directory (and all its subdirectories), analyzing games at most 60 plies deep out of the book,
@@ -39,6 +40,7 @@ Options:
   -o <path>             Path to output epd file (default: popular.epd)
   --omitMoveCounter     Omit movecounter when storing the FEN (the same position with different movecounters is in any case only stored once)
   --saveCount           Output the count of each stored position without movecounter in the file popular_sorted.epd.
+  --cdfCutoff <P>       Output the counts only of the P% most popular positions, weighted by their counts. (default: 100.0)
   --TBlimit <N>         Omit positions with N pieces, or fewer (default: 1)
   --omitMates           Omit positions without a legal move (check/stale mates)
   --minElo <N>          Omit games where WhiteElo or BlackElo < minElo (default: 0)
