@@ -10,13 +10,6 @@
 
 #include "external/json.hpp"
 
-enum class Result { WIN = 'W', DRAW = 'D', LOSS = 'L' };
-
-struct ResultKey {
-  Result white;
-  Result black;
-};
-
 struct TestMetaData {
   std::optional<std::string> book;
   std::optional<bool> sprt;
@@ -46,50 +39,6 @@ void from_json(const nlohmann::json &nlohmann_json_j,
       j.contains("sprt") ? std::optional<bool>(true) : std::nullopt;
 
   nlohmann_json_t.book = get_optional(j, "book");
-}
-
-/// @brief Custom stof implementation to avoid locale issues, once clang
-/// supports std::from_chars for floats this can be removed
-/// @param str
-/// @return
-inline float fast_stof(const char *str) {
-  float result = 0.0f;
-  int sign = 1;
-  int decimal = 0;
-  float fraction = 1.0f;
-
-  // Handle sign
-  if (*str == '-') {
-    sign = -1;
-    str++;
-  } else if (*str == '+') {
-    str++;
-  }
-
-  // Convert integer part
-  while (*str >= '0' && *str <= '9') {
-    result = result * 10.0f + (*str - '0');
-    str++;
-  }
-
-  // Convert decimal part
-  if (*str == '.') {
-    str++;
-    while (*str >= '0' && *str <= '9') {
-      result = result * 10.0f + (*str - '0');
-      fraction *= 10.0f;
-      str++;
-    }
-    decimal = 1;
-  }
-
-  // Apply sign and adjust for decimal
-  result *= sign;
-  if (decimal) {
-    result /= fraction;
-  }
-
-  return result;
 }
 
 /// @brief Get all files from a directory.
