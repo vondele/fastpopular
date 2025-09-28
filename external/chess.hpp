@@ -25,7 +25,7 @@ THIS FILE IS AUTO GENERATED DO NOT CHANGE MANUALLY.
 
 Source: https://github.com/Disservin/chess-library
 
-VERSION: 0.8.16
+VERSION: 0.8.2
 */
 
 #ifndef CHESS_HPP
@@ -302,7 +302,7 @@ class Square {
     // clang-format on
 
 // when c++20
-#if __cplusplus >= 202002L || (defined(_MSC_VER) && _MSVC_LANG >= 202002L)
+#if (__cplusplus >= 202002L && __GNUC__ >= 12) || (defined(_MSC_VER) && _MSVC_LANG >= 202002L)
     using enum underlying;
 #else
 
@@ -1169,10 +1169,10 @@ class attacks {
     [[nodiscard]] static Bitboard king(Square sq) noexcept;
 
     /**
-     * @brief Returns the attacks for a given piece on a given square
+     * @brief Returns the origin squares of pieces of a given color attacking a target square
      * @param board
-     * @param color
-     * @param square
+     * @param color Attacker Color
+     * @param square Attacked Square
      * @return
      */
     [[nodiscard]] static Bitboard attackers(const Board &board, Color color, Square square) noexcept;
@@ -1293,18 +1293,6 @@ class Move {
     std::int16_t score_;
 };
 
-inline std::ostream &operator<<(std::ostream &os, const Move &move) {
-    Square from_sq = move.from();
-    Square to_sq   = move.to();
-
-    os << from_sq << to_sq;
-
-    if (move.typeOf() == Move::PROMOTION) {
-        os << static_cast<std::string>(move.promotionType());
-    }
-
-    return os;
-}
 }  // namespace chess
 
 
@@ -4695,7 +4683,7 @@ class uci {
      * @param uci
      * @return
      */
-    [[nodiscard]] static Move uciToMove(const Board &board, const std::string &uci) noexcept(false) {
+    [[nodiscard]] static Move uciToMove(const Board &board, std::string_view uci) noexcept(false) {
         if (uci.length() < 4) {
             return Move::NO_MOVE;
         }
@@ -4905,7 +4893,7 @@ class uci {
      * @param move
      * @return
      */
-    static bool isUciMove(const std::string &move) noexcept {
+    static bool isUciMove(std::string_view move) noexcept {
         bool is_uci = false;
 
         static constexpr auto is_digit     = [](char c) { return c >= '1' && c <= '8'; };
