@@ -601,6 +601,7 @@ void print_usage(char const *program_name) {
     ss << "  -o <path>             Path to output epd file (default: popular.epd)" << "\n";
     ss << "  --omitMoveCounter     Omit movecounter when storing the FEN (the same position with different movecounters is in any case only stored once)" << "\n";
     ss << "  --saveCount           Output the count of each stored position without movecounter in the file popular_sorted.epd." << "\n";
+    ss << "  --cdfCutoff <P>       Output the counts only of the P\% most popular positions, weighted by their counts. (default: 100.0)" << "\n";
     ss << "  --TBlimit <N>         Omit positions with N pieces, or fewer (default: 1)" << "\n";
     ss << "  --omitMates           Omit positions without a legal move (check/stale mates)" << "\n";
     ss << "  --minElo <N>          Omit games where WhiteElo or BlackElo < minElo (default: 0)" << "\n";
@@ -717,6 +718,14 @@ int main(int argc, char const *argv[]) {
     count_stop_early = std::numeric_limits<decltype(count_stop_early)>::max();
 
   bool save_count = find_argument(args, pos, "--saveCount", true);
+  float cdf_cutoff = 100.0;
+  if (find_argument(args, pos, "--cdfCutoff")) {
+    cdf_cutoff = std::stof(*std::next(pos));
+    if (!save_count) {
+      std::cerr << "--cdfCutoff requires --saveCount" << std::endl;
+      return 1;
+    }
+  }
 
   if (find_argument(args, pos, "--minCount")) {
     min_count = std::stoi(*std::next(pos));
@@ -744,9 +753,13 @@ int main(int argc, char const *argv[]) {
 
   const auto t1 = std::chrono::high_resolution_clock::now();
 
+  std::uint64_t total_visits = std::accumulate(
+      zobrist_map.begin(), zobrist_map.end(), 0,
+      [](std::uint64_t sum, const auto &pair) { return sum + pair.second; });
+
   std::cout << "\nRetained " << total_pos << " positions from "
-            << zobrist_map.size() << " unique visited in " << total_games
-            << " games.\n";
+            << zobrist_map.size() << " unique visited in " << total_visits
+            << " visits in " << total_games << " games.\n";
   std::cout << "Positions written to " << filename << ".\n";
   std::cout << "Total time for processing: "
             << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0)
@@ -761,7 +774,8 @@ int main(int argc, char const *argv[]) {
   }
 
   if (save_count) {
-    std::cout << "Obtaining counts and sorting ... " << std::flush;
+    std::cout << "Obtaining counts, sorting and storing with cdfCutoff="
+              << cdf_cutoff << " ... " << std::flush;
     std::ifstream file(filename);
     std::vector<std::pair<std::uint64_t, std::string>> fens;
     std::string line;
@@ -776,16 +790,23 @@ int main(int argc, char const *argv[]) {
         wordCount++;
       }
       Board board(fen);
-      std::uint64_t key = board.hash();
-      fens.emplace_back(zobrist_map[key], std::move(fen));
+      fens.emplace_back(zobrist_map[board.hash()], std::move(fen));
     }
     file.close();
     sort(fens.begin(), fens.end(), std::greater<>());
     out_file.open("popular_sorted.epd");
+    std::uint64_t cdf_limit =
+        std::uint64_t(cdf_cutoff / 100.0 * total_visits + 0.5);
+    std::uint64_t cdf = 0;
     for (const auto &pair : fens) {
       out_file << pair.second << " ; c0 " << pair.first << "\n";
+      cdf += pair.first;
+      if (cdf >= cdf_limit)
+        break;
     }
-    std::cout << "done. Saved counts to popular_sorted.epd." << std::endl;
+    std::cout << "done.\nSaved the counts accounting for "
+              << cdf * 100.0 / total_visits
+              << "\% of the total visits to popular_sorted.epd." << std::endl;
     out_file.close();
   }
 
