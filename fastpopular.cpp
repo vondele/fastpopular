@@ -128,12 +128,13 @@ public:
           const unsigned int count_stop_early, const int max_plies,
           std::ofstream &out_file, const int min_count,
           const bool omit_move_counter, const unsigned int tb_limit,
-          const bool omit_mates, const int min_Elo, std::mutex &progress_output)
+          const bool omit_mates, const int min_Elo, const bool no_bot,
+          std::mutex &progress_output)
       : file(file), no_frc(no_frc), regex_engine(regex_engine),
         move_counter(move_counter), count_stop_early(count_stop_early),
         max_plies(max_plies), out_file(out_file), min_count(min_count),
         omit_move_counter(omit_move_counter), tb_limit(tb_limit),
-        omit_mates(omit_mates), min_Elo(min_Elo),
+        omit_mates(omit_mates), min_Elo(min_Elo), no_bot(no_bot),
         progress_output(progress_output) {}
 
   virtual ~Analyze() {}
@@ -187,6 +188,10 @@ public:
       } catch (const std::exception &e) {
         blackElo = 0;
       }
+    }
+    if (no_bot && (key == "WhiteTitle" || key == "BlackTitle") &&
+        value == "BOT") {
+      skip = true;
     }
   }
 
@@ -339,6 +344,7 @@ private:
   const unsigned int tb_limit;
   const bool omit_mates;
   const int min_Elo;
+  const bool no_bot;
   std::mutex &progress_output;
 
   Board board;
@@ -367,7 +373,8 @@ void ana_files(const std::vector<std::string> &files, bool no_frc,
                const unsigned int count_stop_early, std::ofstream &out_file,
                const int min_count, const bool omit_move_counter,
                const unsigned int tb_limit, const bool omit_mates,
-               const int min_Elo, std::mutex &progress_output) {
+               const int min_Elo, const bool no_bot,
+               std::mutex &progress_output) {
 
   for (const auto &file : files) {
     std::string move_counter;
@@ -408,7 +415,7 @@ void ana_files(const std::vector<std::string> &files, bool no_frc,
       auto vis = std::make_unique<Analyze>(
           file, no_frc, regex_engine, move_counter, count_stop_early, max_plies,
           out_file, min_count, omit_move_counter, tb_limit, omit_mates, min_Elo,
-          progress_output);
+          no_bot, progress_output);
 
       pgn::StreamParser parser(iss);
 
@@ -544,7 +551,7 @@ void process(const std::vector<std::string> &files_pgn, bool no_frc,
              const unsigned int count_stop_early, std::ofstream &out_file,
              const int min_count, const bool omit_move_counter,
              const unsigned int tb_limit, const bool omit_mates, int min_Elo,
-             int concurrency) {
+             const bool no_bot, int concurrency) {
   // Create more chunks than threads to prevent threads from idling.
   int target_chunks = 4 * concurrency;
 
@@ -565,11 +572,11 @@ void process(const std::vector<std::string> &files_pgn, bool no_frc,
     pool.enqueue([&files, no_frc, &regex_engine, &meta_map, &fix_fens,
                   &progress_output, &files_chunked, &max_plies,
                   &count_stop_early, &out_file, &min_count, omit_move_counter,
-                  &tb_limit, &omit_mates, &min_Elo]() {
+                  &tb_limit, &omit_mates, &min_Elo, &no_bot]() {
       analysis::ana_files(files, no_frc, regex_engine, meta_map, fix_fens,
                           max_plies, count_stop_early, out_file, min_count,
                           omit_move_counter, tb_limit, omit_mates, min_Elo,
-                          progress_output);
+                          no_bot, progress_output);
     });
   }
 
@@ -605,6 +612,7 @@ void print_usage(char const *program_name) {
     ss << "  --TBlimit <N>         Omit positions with N pieces, or fewer (default: 1)" << "\n";
     ss << "  --omitMates           Omit positions without a legal move (check/stale mates)" << "\n";
     ss << "  --minElo <N>          Omit games where WhiteElo or BlackElo < minElo (default: 0)" << "\n";
+    ss << "  --noBOT               Omit games where WhiteTitle or BlackTitle is 'BOT'" << "\n";
     ss << "  --cdb                 Shorthand for --TBlimit 7 --omitMates" << "\n";
     ss << "  --help                Print this help message" << "\n";
   // clang-format on
@@ -688,6 +696,8 @@ int main(int argc, char const *argv[]) {
     min_Elo = std::stoi(*std::next(pos));
   }
 
+  bool no_bot = find_argument(args, pos, "--noBOT", true);
+
   auto meta_map = get_metadata(files_pgn, allow_duplicates);
 
   if (find_argument(args, pos, "--SPRTonly", true)) {
@@ -747,7 +757,7 @@ int main(int argc, char const *argv[]) {
 
   process(files_pgn, no_frc, regex_engine, meta_map, fix_fens, max_plies,
           count_stop_early, out_file, min_count, omit_move_counter, tb_limit,
-          omit_mates, min_Elo, concurrency);
+          omit_mates, min_Elo, no_bot, concurrency);
 
   out_file.close();
 
