@@ -28,7 +28,7 @@ using namespace chess;
 using zobrist_map_t = phmap::parallel_flat_hash_map<
     std::uint64_t, std::uint64_t, std::hash<std::uint64_t>,
     std::equal_to<std::uint64_t>,
-    std::allocator<std::pair<const std::uint64_t, std::uint64_t>>, 8,
+    std::allocator<std::pair<const std::uint64_t, std::uint64_t>>, 12,
     std::mutex>;
 
 zobrist_map_t zobrist_map;
@@ -40,7 +40,7 @@ using map_meta = std::unordered_map<std::string, TestMetaData>;
 using variant_set_t =
     phmap::parallel_flat_hash_set<std::string, std::hash<std::string>,
                                   std::equal_to<std::string>,
-                                  std::allocator<std::string>, 8, std::mutex>;
+                                  std::allocator<std::string>, 12, std::mutex>;
 
 variant_set_t variant_set;
 
@@ -763,9 +763,11 @@ int main(int argc, char const *argv[]) {
 
   const auto t1 = std::chrono::high_resolution_clock::now();
 
-  std::uint64_t total_visits = std::accumulate(
-      zobrist_map.begin(), zobrist_map.end(), 0,
-      [](std::uint64_t sum, const auto &pair) { return sum + pair.second; });
+  std::uint64_t total_visits =
+      std::accumulate(zobrist_map.begin(), zobrist_map.end(), std::uint64_t(0),
+                      [](const std::uint64_t &sum, const auto &pair) {
+                        return sum + pair.second;
+                      });
 
   std::cout << "\nRetained " << total_pos << " positions from "
             << zobrist_map.size() << " unique visited in " << total_visits
