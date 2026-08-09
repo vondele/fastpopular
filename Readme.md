@@ -33,7 +33,7 @@ Options:
   --matchBookInvert     Invert the filter
   --SPRTonly            Analyse only pgns from SPRT tests
   --fixFEN              Patch move counters lost by cutechess-cli
-  --maxPlies <N>        Maximum number of plies to consider from the game, excluding book moves (default 20)
+  --maxPlies <N>        Maximum number of plies to consider from the game, excluding book moves (default 20, 1000 with --endgames)
   --stopEarly           Stop analysing the game as soon as countStopEarly new positions are reached (default false) for the analysing thread.
   --countStopEarly <N>  Number of new positions encountered before stopping with stopEarly (default 1)
   --minCount <N>        Minimum count of the position before being written to file (default 1). Use N=0 to simply parse the games, without writing positions to file.
@@ -45,6 +45,8 @@ Options:
   --omitMates           Omit positions without a legal move (check/stale mates)
   --minElo <N>          Omit games where WhiteElo or BlackElo < minElo (default: 0)
   --cdb                 Shorthand for --TBlimit 7 --omitMates
+  --endgames            Count positions per material key instead of writing popular.epd
+  --pieceCount <N>      Maximum number of pieces for material keys with --endgames (default 6, max 12)
   --help                Print this help message
 ```
 

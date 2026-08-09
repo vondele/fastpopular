@@ -1,6 +1,7 @@
 #include <zlib.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -8,6 +9,7 @@
 #include <string_view>
 #include <vector>
 
+#include "external/chess.hpp"
 #include "external/json.hpp"
 
 struct TestMetaData {
@@ -107,5 +109,100 @@ inline std::string to_lower(std::string_view s) {
   std::string result(s);
   std::transform(result.begin(), result.end(), result.begin(),
                  [](unsigned char c) { return std::tolower(c); });
+  return result;
+}
+
+/// @brief Return the material key for a board as "<White>v<Black>" (e.g. KBNvKP).
+/// Piece order is KQRBNP, kings are always present.
+[[nodiscard]] inline std::string material_key(const chess::Board &board) {
+  static constexpr std::array<chess::PieceType, 5> types = {
+      chess::PieceType::QUEEN, chess::PieceType::ROOK, chess::PieceType::BISHOP,
+      chess::PieceType::KNIGHT, chess::PieceType::PAWN};
+  static constexpr std::array<char, 5> letters = {'Q', 'R', 'B', 'N', 'P'};
+
+  auto count = [&](chess::PieceType pt, chess::Color c) {
+    return board.pieces(pt, c).count();
+  };
+
+  std::string key;
+  key += 'K';
+  for (std::size_t i = 0; i < types.size(); ++i) {
+    key += std::string(count(types[i], chess::Color::WHITE), letters[i]);
+  }
+  key += "vK";
+  for (std::size_t i = 0; i < types.size(); ++i) {
+    key += std::string(count(types[i], chess::Color::BLACK), letters[i]);
+  }
+  return key;
+}
+
+namespace detail {
+
+inline void generate_compositions(int sum, int parts, std::array<int, 5> &current,
+                                  int pos,
+                                  std::vector<std::array<int, 5>> &out) {
+  if (parts == 0) {
+    if (sum == 0) {
+      out.push_back(current);
+    }
+    return;
+  }
+  for (int v = 0; v <= sum; ++v) {
+    current[pos] = v;
+    generate_compositions(sum - v, parts - 1, current, pos + 1, out);
+  }
+}
+
+} // namespace detail
+
+/// @brief Generate all exact White-vs-Black material keys with 2..max_pieces
+/// pieces on the board. Sorted by total piece count, then key.
+[[nodiscard]] inline std::vector<std::string>
+generate_material_keys(int max_pieces) {
+  std::vector<std::pair<std::string, int>> keys;
+
+  for (int non_king = 0; non_king <= max_pieces - 2; ++non_king) {
+    for (int white_extra = 0; white_extra <= non_king; ++white_extra) {
+      int black_extra = non_king - white_extra;
+
+      std::vector<std::array<int, 5>> white_combos;
+      std::array<int, 5> current{};
+      detail::generate_compositions(white_extra, 5, current, 0, white_combos);
+
+      std::vector<std::array<int, 5>> black_combos;
+      detail::generate_compositions(black_extra, 5, current, 0, black_combos);
+
+      for (const auto &wc : white_combos) {
+        for (const auto &bc : black_combos) {
+          std::string key;
+          key += 'K';
+          key += std::string(wc[0], 'Q');
+          key += std::string(wc[1], 'R');
+          key += std::string(wc[2], 'B');
+          key += std::string(wc[3], 'N');
+          key += std::string(wc[4], 'P');
+          key += "vK";
+          key += std::string(bc[0], 'Q');
+          key += std::string(bc[1], 'R');
+          key += std::string(bc[2], 'B');
+          key += std::string(bc[3], 'N');
+          key += std::string(bc[4], 'P');
+          keys.emplace_back(key, non_king + 2);
+        }
+      }
+    }
+  }
+
+  std::sort(keys.begin(), keys.end(), [](const auto &a, const auto &b) {
+    if (a.second != b.second)
+      return a.second < b.second;
+    return a.first < b.first;
+  });
+
+  std::vector<std::string> result;
+  result.reserve(keys.size());
+  for (const auto &k : keys) {
+    result.push_back(k.first);
+  }
   return result;
 }
