@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iostream>
 #include <mutex>
+#include <numeric>
 #include <regex>
 #include <set>
 #include <sstream>
@@ -126,16 +127,21 @@ public:
   Analyze(std::string_view file, const bool no_frc,
           const std::string &regex_engine, const std::string &move_counter,
           const unsigned int count_stop_early, const int max_plies,
-          std::ofstream &out_file, const int min_count,
+          std::ofstream *out_file, const int min_count,
           const bool omit_move_counter, const unsigned int tb_limit,
           const bool omit_mates, const int min_Elo, const bool no_bot,
-          std::mutex &progress_output)
+          std::mutex &progress_output, const bool endgames_mode,
+          const int piece_count,
+          const std::unordered_map<std::string, std::size_t> &key_to_index,
+          std::vector<std::uint64_t> &material_counts)
       : file(file), no_frc(no_frc), regex_engine(regex_engine),
         move_counter(move_counter), count_stop_early(count_stop_early),
         max_plies(max_plies), out_file(out_file), min_count(min_count),
         omit_move_counter(omit_move_counter), tb_limit(tb_limit),
         omit_mates(omit_mates), min_Elo(min_Elo), no_bot(no_bot),
-        progress_output(progress_output) {}
+        progress_output(progress_output), endgames_mode(endgames_mode),
+        piece_count(piece_count), key_to_index(key_to_index),
+        material_counts(material_counts) {}
 
   virtual ~Analyze() {}
 
@@ -265,6 +271,21 @@ public:
       return;
     }
 
+    if (endgames_mode) {
+      if (comment != "book" &&
+          (!do_filter || filter_side == board.sideToMove())) {
+        unsigned int pc = board.occ().count();
+        if (pc <= static_cast<unsigned int>(piece_count)) {
+          auto it = key_to_index.find(material_key(board));
+          if (it != key_to_index.end()) {
+            ++material_counts[it->second];
+          }
+        }
+      }
+      retained_plies++;
+      return;
+    }
+
     if (tb_limit > 1) {
       unsigned int piece_count = board.occ().count();
       if (piece_count <= tb_limit) {
@@ -301,7 +322,9 @@ public:
           total_pos++;
           std::string fen = board.getFen(!omit_move_counter);
           const std::lock_guard<std::mutex> lock(progress_output);
-          out_file << fen << "\n";
+          if (out_file) {
+            *out_file << fen << "\n";
+          }
         }
 
         if (is_new_entry)
@@ -338,7 +361,7 @@ private:
   const std::string &move_counter;
   const unsigned int count_stop_early;
   const int max_plies;
-  std::ofstream &out_file;
+  std::ofstream *out_file;
   const int min_count;
   const bool omit_move_counter;
   const unsigned int tb_limit;
@@ -346,6 +369,11 @@ private:
   const int min_Elo;
   const bool no_bot;
   std::mutex &progress_output;
+
+  const bool endgames_mode;
+  const int piece_count;
+  const std::unordered_map<std::string, std::size_t> &key_to_index;
+  std::vector<std::uint64_t> &material_counts;
 
   Board board;
   Movelist moves;
@@ -370,11 +398,14 @@ private:
 void ana_files(const std::vector<std::string> &files, bool no_frc,
                const std::string &regex_engine, const map_meta &meta_map,
                bool fix_fens, const int max_plies,
-               const unsigned int count_stop_early, std::ofstream &out_file,
+               const unsigned int count_stop_early, std::ofstream *out_file,
                const int min_count, const bool omit_move_counter,
                const unsigned int tb_limit, const bool omit_mates,
                const int min_Elo, const bool no_bot,
-               std::mutex &progress_output) {
+               std::mutex &progress_output, const bool endgames_mode,
+               const int piece_count,
+               const std::unordered_map<std::string, std::size_t> &key_to_index,
+               std::vector<std::uint64_t> &material_counts) {
 
   for (const auto &file : files) {
     std::string move_counter;
@@ -415,7 +446,8 @@ void ana_files(const std::vector<std::string> &files, bool no_frc,
       auto vis = std::make_unique<Analyze>(
           file, no_frc, regex_engine, move_counter, count_stop_early, max_plies,
           out_file, min_count, omit_move_counter, tb_limit, omit_mates, min_Elo,
-          no_bot, progress_output);
+          no_bot, progress_output, endgames_mode, piece_count, key_to_index,
+          material_counts);
 
       pgn::StreamParser parser(iss);
 
@@ -545,13 +577,16 @@ void filter_files_sprt(std::vector<std::string> &file_list,
                   file_list.end());
 }
 
-void process(const std::vector<std::string> &files_pgn, bool no_frc,
-             const std::string &regex_engine, const map_meta &meta_map,
-             bool fix_fens, const int max_plies,
-             const unsigned int count_stop_early, std::ofstream &out_file,
-             const int min_count, const bool omit_move_counter,
-             const unsigned int tb_limit, const bool omit_mates, int min_Elo,
-             const bool no_bot, int concurrency) {
+std::vector<std::uint64_t>
+process(const std::vector<std::string> &files_pgn, bool no_frc,
+        const std::string &regex_engine, const map_meta &meta_map,
+        bool fix_fens, const int max_plies,
+        const unsigned int count_stop_early, std::ofstream *out_file,
+        const int min_count, const bool omit_move_counter,
+        const unsigned int tb_limit, const bool omit_mates, int min_Elo,
+        const bool no_bot, int concurrency, const bool endgames_mode,
+        const int piece_count,
+        const std::unordered_map<std::string, std::size_t> &key_to_index) {
   // Create more chunks than threads to prevent threads from idling.
   int target_chunks = 4 * concurrency;
 
@@ -564,24 +599,46 @@ void process(const std::vector<std::string> &files_pgn, bool no_frc,
   // Mutex for progress output
   std::mutex progress_output;
 
+  // Per-chunk material counters for the endgames mode
+  std::vector<std::vector<std::uint64_t>> chunk_counts;
+  if (endgames_mode) {
+    chunk_counts.assign(files_chunked.size(),
+                        std::vector<std::uint64_t>(key_to_index.size(), 0));
+  }
+
   // Create a thread pool
   ThreadPool pool(concurrency);
 
-  for (const auto &files : files_chunked) {
+  for (std::size_t i = 0; i < files_chunked.size(); ++i) {
+    const auto &files = files_chunked[i];
 
     pool.enqueue([&files, no_frc, &regex_engine, &meta_map, &fix_fens,
                   &progress_output, &files_chunked, &max_plies,
-                  &count_stop_early, &out_file, &min_count, omit_move_counter,
-                  &tb_limit, &omit_mates, &min_Elo, &no_bot]() {
+                  &count_stop_early, out_file, &min_count, omit_move_counter,
+                  &tb_limit, &omit_mates, &min_Elo, &no_bot, endgames_mode,
+                  piece_count, &key_to_index, &chunk_counts, i]() {
       analysis::ana_files(files, no_frc, regex_engine, meta_map, fix_fens,
                           max_plies, count_stop_early, out_file, min_count,
                           omit_move_counter, tb_limit, omit_mates, min_Elo,
-                          no_bot, progress_output);
+                          no_bot, progress_output, endgames_mode, piece_count,
+                          key_to_index, chunk_counts[i]);
     });
   }
 
   // Wait for all threads to finish
   pool.wait();
+
+  std::vector<std::uint64_t> total_counts;
+  if (endgames_mode) {
+    total_counts.assign(key_to_index.size(), 0);
+    for (const auto &c : chunk_counts) {
+      for (std::size_t i = 0; i < c.size(); ++i) {
+        total_counts[i] += c[i];
+      }
+    }
+  }
+
+  return total_counts;
 }
 
 void print_usage(char const *program_name) {
@@ -601,7 +658,7 @@ void print_usage(char const *program_name) {
     ss << "  --matchBookInvert     Invert the filter" << "\n";
     ss << "  --SPRTonly            Analyse only pgns from SPRT tests" << "\n";
     ss << "  --fixFEN              Patch move counters lost by cutechess-cli" << "\n";
-    ss << "  --maxPlies <N>        Maximum number of plies to consider from the game, excluding book moves (default 20)" << "\n";
+    ss << "  --maxPlies <N>        Maximum number of plies to consider from the game, excluding book moves (default 20, 1000 with --endgames)" << "\n";
     ss << "  --stopEarly           Stop analysing the game as soon as countStopEarly new positions are reached (default false) for the analysing thread." << "\n";
     ss << "  --countStopEarly <N>  Number of new positions encountered before stopping with stopEarly (default 1)" << "\n";
     ss << "  --minCount <N>        Minimum count of the position before being written to file (default 1). Use N=0 to simply parse the games, without writing positions to file." << "\n";
@@ -614,6 +671,8 @@ void print_usage(char const *program_name) {
     ss << "  --minElo <N>          Omit games where WhiteElo or BlackElo < minElo (default: 0)" << "\n";
     ss << "  --noBOT               Omit games where WhiteTitle or BlackTitle is 'BOT'" << "\n";
     ss << "  --cdb                 Shorthand for --TBlimit 7 --omitMates" << "\n";
+    ss << "  --endgames            Count positions per material key instead of writing popular.epd" << "\n";
+    ss << "  --pieceCount <N>      Maximum number of pieces for material keys with --endgames (default 6, max 12)" << "\n";
     ss << "  --help                Print this help message" << "\n";
   // clang-format on
 
@@ -629,17 +688,34 @@ int main(int argc, char const *argv[]) {
 
   std::vector<std::string> files_pgn;
   std::string regex_engine, regex_book, filename = "popular.epd";
-  int max_plies = 20;
   int min_Elo = 0;
   unsigned int min_count = 1;
   unsigned int count_stop_early = 1;
   int concurrency = std::max(1, int(std::thread::hardware_concurrency()));
+
+  bool endgames_mode = false;
+  int piece_count = 6;
+  std::string endgames_filename = "endgames_counts.txt";
+  int max_plies = 20;
 
   std::vector<std::string>::const_iterator pos;
 
   if (std::find(args.begin(), args.end(), "--help") != args.end()) {
     print_usage(argv[0]);
     return 0;
+  }
+
+  endgames_mode = find_argument(args, pos, "--endgames", true);
+
+  if (endgames_mode) {
+    max_plies = 1000;
+    if (find_argument(args, pos, "--pieceCount")) {
+      piece_count = std::stoi(*std::next(pos));
+    }
+    if (piece_count < 2 || piece_count > 12) {
+      std::cerr << "Error: --pieceCount must be between 2 and 12" << std::endl;
+      return 1;
+    }
   }
 
   if (find_argument(args, pos, "--concurrency")) {
@@ -698,6 +774,18 @@ int main(int argc, char const *argv[]) {
 
   bool no_bot = find_argument(args, pos, "--noBOT", true);
 
+  std::vector<std::string> material_keys;
+  std::unordered_map<std::string, std::size_t> key_to_index;
+  if (endgames_mode) {
+    material_keys = generate_material_keys(piece_count);
+    for (std::size_t i = 0; i < material_keys.size(); ++i) {
+      key_to_index[material_keys[i]] = i;
+    }
+    std::cout << "Generated " << material_keys.size()
+              << " material keys up to " << piece_count << " pieces."
+              << std::endl;
+  }
+
   auto meta_map = get_metadata(files_pgn, allow_duplicates);
 
   if (find_argument(args, pos, "--SPRTonly", true)) {
@@ -724,7 +812,7 @@ int main(int argc, char const *argv[]) {
   if (find_argument(args, pos, "--countStopEarly")) {
     count_stop_early = std::stoi(*std::next(pos));
   }
-  if (!stop_early)
+  if (!stop_early || endgames_mode)
     count_stop_early = std::numeric_limits<decltype(count_stop_early)>::max();
 
   bool save_count = find_argument(args, pos, "--saveCount", true);
@@ -751,75 +839,111 @@ int main(int argc, char const *argv[]) {
     filename = *std::next(pos);
   }
 
-  std::ofstream out_file(filename);
+  std::ofstream out_file;
+  std::ofstream *out_file_ptr = nullptr;
+  if (!endgames_mode) {
+    out_file.open(filename);
+    out_file_ptr = &out_file;
+  }
 
   const auto t0 = std::chrono::high_resolution_clock::now();
 
-  process(files_pgn, no_frc, regex_engine, meta_map, fix_fens, max_plies,
-          count_stop_early, out_file, min_count, omit_move_counter, tb_limit,
-          omit_mates, min_Elo, no_bot, concurrency);
+  auto material_counts =
+      process(files_pgn, no_frc, regex_engine, meta_map, fix_fens, max_plies,
+              count_stop_early, out_file_ptr, min_count, omit_move_counter,
+              tb_limit, omit_mates, min_Elo, no_bot, concurrency, endgames_mode,
+              piece_count, key_to_index);
 
-  out_file.close();
+  if (out_file.is_open()) {
+    out_file.close();
+  }
 
   const auto t1 = std::chrono::high_resolution_clock::now();
 
-  std::uint64_t total_visits =
-      std::accumulate(zobrist_map.begin(), zobrist_map.end(), std::uint64_t(0),
-                      [](const std::uint64_t &sum, const auto &pair) {
-                        return sum + pair.second;
-                      });
+  if (endgames_mode) {
+    std::ofstream eg_out(endgames_filename);
+    for (std::size_t i = 0; i < material_keys.size(); ++i) {
+      eg_out << material_keys[i] << ' ' << material_counts[i] << '\n';
+    }
+    eg_out.close();
 
-  std::cout << "\nRetained " << total_pos << " positions from "
-            << zobrist_map.size() << " unique visited in " << total_visits
-            << " visits in " << total_games << " games.\n";
-  std::cout << "Positions written to " << filename << ".\n";
-  std::cout << "Total time for processing: "
-            << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0)
-                       .count() /
-                   1000.0
-            << " s" << std::endl;
+    std::uint64_t total_endgame_visits =
+        std::accumulate(material_counts.begin(), material_counts.end(),
+                        std::uint64_t(0));
+    std::size_t nonzero_keys =
+        std::count_if(material_counts.begin(), material_counts.end(),
+                      [](std::uint64_t c) { return c > 0; });
+
+    std::cout << "\nCounted " << total_endgame_visits
+              << " endgame positions in " << nonzero_keys
+              << " non-zero material keys out of " << material_keys.size()
+              << " possible keys.\n";
+    std::cout << "Material key counts written to " << endgames_filename
+              << ".\n";
+    std::cout << "Total time for processing: "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0)
+                         .count() /
+                     1000.0
+              << " s" << std::endl;
+  } else {
+    std::uint64_t total_visits = std::accumulate(
+        zobrist_map.begin(), zobrist_map.end(), std::uint64_t(0),
+        [](const std::uint64_t &sum, const auto &pair) {
+          return sum + pair.second;
+        });
+
+    std::cout << "\nRetained " << total_pos << " positions from "
+              << zobrist_map.size() << " unique visited in " << total_visits
+              << " visits in " << total_games << " games.\n";
+    std::cout << "Positions written to " << filename << ".\n";
+    std::cout << "Total time for processing: "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0)
+                         .count() /
+                     1000.0
+              << " s" << std::endl;
+
+    if (save_count) {
+      std::cout << "Obtaining counts, sorting and storing with cdfCutoff="
+                << cdf_cutoff << " ... " << std::flush;
+      std::ifstream file(filename);
+      std::vector<std::pair<std::uint64_t, std::string>> fens;
+      std::string line;
+      while (std::getline(file, line)) {
+        std::istringstream iss(line);
+        std::string fen, word;
+        int wordCount = 0;
+        while (iss >> word && wordCount < 4) {
+          if (wordCount > 0)
+            fen += " ";
+          fen += word;
+          wordCount++;
+        }
+        Board board(fen);
+        fens.emplace_back(zobrist_map[board.hash()], std::move(fen));
+      }
+      file.close();
+      sort(fens.begin(), fens.end(), std::greater<>());
+      out_file.open("popular_sorted.epd");
+      std::uint64_t cdf_limit =
+          std::uint64_t(cdf_cutoff / 100.0 * total_visits + 0.5);
+      std::uint64_t cdf = 0;
+      for (const auto &pair : fens) {
+        out_file << pair.second << " ; c0 " << pair.first << "\n";
+        cdf += pair.first;
+        if (cdf >= cdf_limit)
+          break;
+      }
+      std::cout << "done.\nSaved the counts accounting for "
+                << cdf * 100.0 / total_visits
+                << "\% of the total visits to popular_sorted.epd." << std::endl;
+      out_file.close();
+    }
+  }
 
   if (variant_set.size()) {
     std::cout << "The following unknown chess variants have been ignored:";
     variant_set.for_each([](const std::string &s) { std::cout << " " << s; });
     std::cout << std::endl;
-  }
-
-  if (save_count) {
-    std::cout << "Obtaining counts, sorting and storing with cdfCutoff="
-              << cdf_cutoff << " ... " << std::flush;
-    std::ifstream file(filename);
-    std::vector<std::pair<std::uint64_t, std::string>> fens;
-    std::string line;
-    while (std::getline(file, line)) {
-      std::istringstream iss(line);
-      std::string fen, word;
-      int wordCount = 0;
-      while (iss >> word && wordCount < 4) {
-        if (wordCount > 0)
-          fen += " ";
-        fen += word;
-        wordCount++;
-      }
-      Board board(fen);
-      fens.emplace_back(zobrist_map[board.hash()], std::move(fen));
-    }
-    file.close();
-    sort(fens.begin(), fens.end(), std::greater<>());
-    out_file.open("popular_sorted.epd");
-    std::uint64_t cdf_limit =
-        std::uint64_t(cdf_cutoff / 100.0 * total_visits + 0.5);
-    std::uint64_t cdf = 0;
-    for (const auto &pair : fens) {
-      out_file << pair.second << " ; c0 " << pair.first << "\n";
-      cdf += pair.first;
-      if (cdf >= cdf_limit)
-        break;
-    }
-    std::cout << "done.\nSaved the counts accounting for "
-              << cdf * 100.0 / total_visits
-              << "\% of the total visits to popular_sorted.epd." << std::endl;
-    out_file.close();
   }
 
   return 0;
